@@ -71,7 +71,3 @@ def test_invalid_learned_id_order_is_rejected() -> None:
             merges=(MergeRule(1, 2, 257),),
             special_token_ids=(),
         )
-
-
-def test_training_dependent_contracts_are_deferred() -> None:
-    pytest.skip("optimized-trainer equivalence is deferred until the optimized trainer exists")

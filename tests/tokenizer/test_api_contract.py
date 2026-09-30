@@ -1,6 +1,7 @@
 import pytest
 
 from wendyfm.tokenizer import BPETokenizer, TokenizerConfig, empty_spec, pretokenize
+from wendyfm.tokenizer.training import train_naive, train_optimized
 
 
 def test_public_api_exposes_small_stable_surface() -> None:
@@ -90,3 +91,32 @@ def test_invalid_token_id_is_rejected() -> None:
     tokenizer = BPETokenizer.train(["hello"], vocab_size=260)
     with pytest.raises(ValueError):
         tokenizer.decode([9999])
+
+
+@pytest.mark.parametrize(
+    "texts, vocab_size, special_tokens",
+    [
+        ([], 270, ()),
+        (["a b c"], 270, ()),
+        (["aaaaa", "abababa", "aaaaaa"], 270, ()),
+        (["Hello, world!", "你好，世界", "🙂🚀"], 280, ()),
+        (["x = 1\n\tprint(x)", "a  a\n=="], 275, ()),
+        (["hello<eos> world", "<bos>你好"], 275, ("<bos>", "<eos>")),
+        (["ab cd ef", "ba dc fe", "abcabc"], 265, ()),
+    ],
+)
+def test_optimized_training_matches_naive(
+    texts: list[str], vocab_size: int, special_tokens: tuple[str, ...]
+) -> None:
+    config = TokenizerConfig(vocab_size, special_tokens)
+    assert train_optimized(texts, config) == train_naive(texts, config)
+
+
+def test_optimized_training_matches_naive_on_fixed_random_corpora() -> None:
+    import random
+
+    rng = random.Random(7)
+    for _ in range(20):
+        texts = ["".join(rng.choice("ab c") for _ in range(rng.randrange(8))) for _ in range(3)]
+        config = TokenizerConfig(rng.randrange(257, 264))
+        assert train_optimized(texts, config) == train_naive(texts, config)

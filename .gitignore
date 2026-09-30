@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Model / training artifacts
+checkpoints/
+outputs/
+artifacts/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Data
+data/raw/
+data/processed/
+*.parquet
+*.arrow
+
+# Logs
+logs/
+*.log
+
+# Temporary
+tmp/
+.cache/

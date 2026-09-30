@@ -111,7 +111,8 @@ def pretokenize(text: str, special_tokens: tuple[str, ...] = ()) -> tuple[str, .
         return ()
     if not special_tokens:
         return tuple(match.group(0) for match in _PRETOKENIZE_RE.finditer(text))
-    special_pattern = re.compile("|".join(re.escape(token) for token in special_tokens))
+    ordered_tokens = sorted(enumerate(special_tokens), key=lambda item: (-len(item[1]), item[0]))
+    special_pattern = re.compile("|".join(re.escape(token) for _, token in ordered_tokens))
     pieces: list[str] = []
     cursor = 0
     for match in special_pattern.finditer(text):

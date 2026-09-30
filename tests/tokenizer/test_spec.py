@@ -74,4 +74,4 @@ def test_invalid_learned_id_order_is_rejected() -> None:
 
 
 def test_training_dependent_contracts_are_deferred() -> None:
-    pytest.skip("training, round-trip behavior, serialization I/O, and equivalence are M1.2+")
+    pytest.skip("optimized-trainer equivalence is deferred until the optimized trainer exists")

@@ -13,6 +13,7 @@ establish a full training pipeline or account access beyond the checks listed.
 | Kaggle dual Tesla T4 CUDA matrix multiplication | PASS |
 | Kaggle results downloaded to Mac | PASS |
 | Kaggle reads the public WendyFM GitHub README | PASS |
+| Kaggle runs the pinned WendyFM tokenizer source on CPU; round trip and deterministic training | PASS |
 | Hugging Face CLI authentication | PASS |
 | Hugging Face `whoami` | PASS |
 | W&B CLI login | PASS |
@@ -23,13 +24,26 @@ For the W&B logging check, `wandb.init(mode="online")` and
 `run.log({"test_metric": 1.0})` succeeded, five files synchronized, and the
 run finished successfully.
 
+The tokenizer smoke job ran on Kaggle CPU at commit
+`5f810f4e1d6a7f83a68aa350a175b7a18ff469ef`. Its downloaded result was
+verified on the Mac: `status`, `round_trip`, and `deterministic` passed, and the
+expected and tested commit SHAs matched. Evidence:
+`benchmarks/infra/kaggle_tokenizer_smoke_20261008.json`. See
+`docs/kaggle-tokenizer-smoke.md` for the procedure and result.
+
+## DSW local tool inventory
+
+The DSW local tool inventory is complete. This records only an inventory of
+locally available tools; it does not establish DSW connectivity, execution, or
+end-to-end permissions.
+
 ## Not yet verified
 
 | Check | Status |
 | --- | --- |
 | Hugging Face model upload | NOT YET VERIFIED |
-| DSW audit, connectivity, and permissions | NOT YET VERIFIED |
-| Full GitHub-to-Kaggle training pipeline | NOT YET VERIFIED |
+| DSW connectivity and end-to-end permissions | NOT YET VERIFIED |
+| Full GPU pretraining on Kaggle | NOT YET VERIFIED |
 
 ## Platform responsibilities
 

@@ -1,12 +1,18 @@
 # GitHub-to-Kaggle tokenizer smoke test
 
-This test is prepared for a private, CPU-only Kaggle script with internet access.
-It clones the public WendyFM repository, checks out an exact commit SHA, imports
-`BPETokenizer` from that checkout, trains twice on a tiny fixed corpus, and
-asserts deterministic specifications and an encode/decode round trip. The job
-writes `tokenizer-smoke-result.json` for verification on the Mac. It has not yet
-been submitted; the end-to-end pipeline remains unverified until a remote PASS
-result is downloaded.
+This test ran as a private, CPU-only Kaggle script with internet access. It
+cloned the public WendyFM repository, checked out an exact commit SHA, imported
+`BPETokenizer` from that checkout, trained twice on a tiny fixed corpus, and
+asserted deterministic specifications and an encode/decode round trip. The
+downloaded `tokenizer-smoke-result.json` was verified on the Mac.
+
+## Observed result — 2026-10-08
+
+**PASS** for the remote tokenizer smoke test. The expected and tested commit
+SHAs both equal `5f810f4e1d6a7f83a68aa350a175b7a18ff469ef`; `round_trip`
+and `deterministic` are both `true`, and `token_count` is `5`. The downloaded
+evidence is saved at `benchmarks/infra/kaggle_tokenizer_smoke_20261008.json`.
+This job used CPU. Full GPU pretraining remains unverified.
 
 ## Mac terminal commands
 
@@ -43,16 +49,16 @@ The verifier prints `PASS` only when the run succeeded, both recorded SHAs
 equal the pinned SHA, and the tokenizer assertions succeeded. A failure exits
 nonzero; inspect the downloaded JSON and Kaggle job log.
 
-## Expected result JSON
+## Result JSON
 
-On success, `tokenizer-smoke-result.json` has this shape; `token_count` is a
-positive integer calculated by the checked-out source:
+The saved Kaggle result contains these values; `token_count` was calculated by
+the checked-out source:
 
 ```json
 {
   "status": "PASS",
-  "expected_commit_sha": "<40-character pinned commit SHA>",
-  "tested_commit_sha": "<same 40-character commit SHA>",
+  "expected_commit_sha": "5f810f4e1d6a7f83a68aa350a175b7a18ff469ef",
+  "tested_commit_sha": "5f810f4e1d6a7f83a68aa350a175b7a18ff469ef",
   "test": "tokenizer_round_trip",
   "token_count": 5,
   "round_trip": true,
@@ -60,9 +66,7 @@ positive integer calculated by the checked-out source:
 }
 ```
 
-The count `5` came from running the smoke logic locally on the current source;
-the Kaggle result must calculate its own count from the pinned commit. A failed
-run writes `status: "FAIL"` with an `error` field when possible.
+A failed run writes `status: "FAIL"` with an `error` field when possible.
 
 ## Data and credential boundary
 

@@ -6,7 +6,17 @@ Build an interview-ready foundation-model training and systems project.
 
 ## Current milestone
 
-Milestone 0 — Environment and repository setup.
+Milestone 2 — Decoder-only Transformer.
+
+## Completed milestones
+
+### Milestone 1 — Tokenizer
+
+Complete. Includes deterministic byte-level BPE, naive and optimized trainers,
+serialization, tests, and a local benchmark report:
+
+- `report/tokenizer.md`
+- `benchmarks/tokenizer/results.csv`
 
 ## Done
 
@@ -18,18 +28,13 @@ Milestone 0 — Environment and repository setup.
 
 ## In progress
 
-- Repository scaffold
-- Codex project rules
-- GitHub remote repository
+- Decoder-only Transformer design and implementation
 
 ## Next
 
-1. Initialize Python package
-2. Add development tooling
-3. Write architecture plan
-4. Start tokenizer milestone
-5. Add unit tests
-6. Run first reproducible experiment
+1. Implement the decoder-only Transformer
+2. Add model unit tests
+3. Start small-scale pretraining
 
 ## Research / engineering principles
 
@@ -42,4 +47,3 @@ Every experiment should record:
 - metric
 - result
 - interpretation
-

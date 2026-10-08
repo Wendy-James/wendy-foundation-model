@@ -19,5 +19,5 @@ The goal is to build and understand the major components of modern language-mode
 
 ## Status
 
-Environment and repository infrastructure are currently being initialized.
-
+Milestone 1 — Tokenizer is complete. See [the technical report](report/tokenizer.md)
+and [benchmark results](benchmarks/tokenizer/results.csv).

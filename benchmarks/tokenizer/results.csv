@@ -1,0 +1,5 @@
+domain,corpus_characters,corpus_utf8_bytes,pretokenized_pieces,configured_vocab_size,actual_vocab_size,merge_count,naive_training_seconds,optimized_training_seconds,speedup,spec_equal,naive_peak_python_bytes,optimized_peak_python_bytes,encoding_characters_per_second,token_count,characters_per_token,utf8_bytes_per_token
+english,43840,43840,13440,300,300,43,2.749475791,0.379323167,7.248373,True,2925589,8061095,278041.962,24000,1.826667,1.826667
+chinese,12160,35840,2880,300,300,43,0.884050083,1.268940167,0.696684,True,1071148,7018037,109259.708,17280,0.703704,2.074074
+code,42880,42880,15040,300,294,37,1.809561416,0.397594958,4.551269,True,3167958,8106697,335214.312,15040,2.851064,2.851064
+mixed,13760,17280,6080,300,291,34,0.650472292,0.142392125,4.568176,True,1284010,3578917,259529.192,6080,2.263158,2.842105

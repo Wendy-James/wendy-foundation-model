@@ -13,15 +13,35 @@ establish a full training pipeline or account access beyond the checks listed.
 | Kaggle dual Tesla T4 CUDA matrix multiplication | PASS |
 | Kaggle results downloaded to Mac | PASS |
 | Kaggle reads the public WendyFM GitHub README | PASS |
+| Hugging Face CLI authentication | PASS |
+| Hugging Face `whoami` | PASS |
+| W&B CLI login | PASS |
+| W&B authentication stored in `~/.netrc` | PASS |
+| Mac to W&B online metric logging | PASS |
+
+For the W&B logging check, `wandb.init(mode="online")` and
+`run.log({"test_metric": 1.0})` succeeded, five files synchronized, and the
+run finished successfully.
 
 ## Not yet verified
 
 | Check | Status |
 | --- | --- |
-| Hugging Face account authentication | NOT YET VERIFIED |
-| W&B account authentication and cloud logging | NOT YET VERIFIED |
-| DSW connectivity and permissions | NOT YET VERIFIED |
+| Hugging Face model upload | NOT YET VERIFIED |
+| DSW audit, connectivity, and permissions | NOT YET VERIFIED |
 | Full GitHub-to-Kaggle training pipeline | NOT YET VERIFIED |
+
+## Platform responsibilities
+
+| Platform | Responsibility |
+| --- | --- |
+| Mac | Development |
+| Codex | Implementation |
+| GitHub | Version control |
+| Kaggle | Personal GPU experiments |
+| Hugging Face | Models and datasets |
+| W&B | Experiment tracking |
+| DSW | Authorized company workloads only |
 
 ## Terminal-first workflow
 
@@ -38,3 +58,8 @@ WendyFM is personal, public research. Keep its code, data, credentials, and
 results separate from company DSW resources. Use DSW only for authorized
 company work under company access rules; do not move company code, data, or
 outputs into WendyFM or its public GitHub repository.
+
+## Credential safety
+
+Never commit `~/.netrc`, credentials, or tokens. Keep authentication files and
+secret values out of the repository, logs, reports, and experiment artifacts.

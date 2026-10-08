@@ -4,7 +4,7 @@
 
 Build an interview-ready foundation-model training and systems project.
 
-## Current milestone
+## Next milestone
 
 Milestone 2 — Decoder-only Transformer.
 
@@ -12,8 +12,9 @@ Milestone 2 — Decoder-only Transformer.
 
 ### Milestone 1 — Tokenizer
 
-Complete. Includes deterministic byte-level BPE, naive and optimized trainers,
-serialization, tests, and a local benchmark report:
+Complete, committed, and pushed to GitHub. Includes deterministic byte-level
+BPE, naive and optimized trainers, serialization, tests, and a local benchmark
+report:
 
 - `report/tokenizer.md`
 - `benchmarks/tokenizer/results.csv`
@@ -25,16 +26,20 @@ serialization, tests, and a local benchmark report:
 - GitHub SSH authentication configured
 - uv installed
 - Python 3.11 project environment created
+- Hugging Face CLI authentication and `whoami` verified
+- W&B CLI login verified; authentication stored in `~/.netrc`
+- Mac to W&B online metric logging verified
 
 ## In progress
 
-- Decoder-only Transformer design and implementation
+- Infrastructure integration and connectivity audit
 
 ## Next
 
-1. Implement the decoder-only Transformer
-2. Add model unit tests
-3. Start small-scale pretraining
+1. Verify Hugging Face model upload and complete the DSW audit
+2. Verify the full GitHub-to-Kaggle training pipeline
+3. Implement the decoder-only Transformer and add model unit tests
+4. Start small-scale pretraining
 
 ## Research / engineering principles
 

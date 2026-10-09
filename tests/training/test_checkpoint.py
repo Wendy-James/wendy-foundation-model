@@ -351,3 +351,39 @@ def test_truncated_checkpoint_and_malformed_fingerprint_are_errors(tmp_path) -> 
     torch.save(payload, path)
     with pytest.raises(ValueError, match="fingerprint"):
         load_checkpoint(path, model, optimizer, sampler=sampler, config=config, batch_size=2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_cuda_checkpoint_saves_rng_and_restores_optimizer_on_device(tmp_path) -> None:
+    model = _model().cuda()
+    config = TrainConfig(max_steps=2)
+    sampler = NextTokenBatchSampler(torch.arange(12), seq_len=4, model_vocab_size=13, seed=1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    train(model, lambda: sampler.sample(2), config, optimizer=optimizer, end_step=1)
+    path = tmp_path / "cuda.pt"
+    save_checkpoint(path, model, optimizer, 1, sampler=sampler, config=config, batch_size=2)
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    assert payload["format_version"] == 4
+    assert payload["cuda_device_index"] == 0
+    assert payload["cuda_rng_state"].dtype == torch.uint8
+
+    restored = _model().cuda()
+    restored_optimizer = torch.optim.AdamW(restored.parameters(), lr=config.learning_rate)
+    restored_sampler = NextTokenBatchSampler(
+        torch.arange(12), seq_len=4, model_vocab_size=13, seed=999
+    )
+    step = load_checkpoint(
+        path, restored, restored_optimizer, sampler=restored_sampler,
+        config=config, batch_size=2,
+    )
+    assert step == 1
+    assert all(
+        value.device.type == "cuda"
+        for state in restored_optimizer.state.values()
+        for value in state.values() if isinstance(value, torch.Tensor)
+    )
+    resumed = train(
+        restored, lambda: restored_sampler.sample(2), config,
+        optimizer=restored_optimizer, start_step=step,
+    )
+    assert resumed.step == 2

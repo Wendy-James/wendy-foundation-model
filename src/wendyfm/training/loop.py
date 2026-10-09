@@ -1,4 +1,4 @@
-"""Minimal CPU pretraining with explicit, already-aligned next-token targets."""
+"""Single-device pretraining with explicit, already-aligned next-token targets."""
 
 import math
 import time
@@ -59,6 +59,7 @@ class TrainResult:
     final_loss: float
     mean_step_seconds: float
     tokens_per_second: float
+    peak_cuda_memory_bytes: int | None
     optimizer: torch.optim.AdamW
 
 
@@ -89,7 +90,8 @@ def train(
     """Train through end_step (default max_steps), using global schedule steps.
 
     The provider returns CPU long tensors [B, T]. Targets are shifted by the
-    provider exactly once and are passed unchanged to model.next_token_loss.
+    provider exactly once. Both tensors move to the model device together;
+    model.next_token_loss does not shift explicit targets again.
     Save `result.optimizer` and `result.step` in a checkpoint to resume.
     """
     if (
@@ -106,8 +108,14 @@ def train(
         or not start_step < end_step <= config.max_steps
     ):
         raise ValueError("end_step must be in (start_step, max_steps]")
-    if any(parameter.device.type != "cpu" for parameter in model.parameters()):
-        raise ValueError("train requires a CPU model")
+    devices = {parameter.device for parameter in model.parameters()}
+    if len(devices) != 1:
+        raise ValueError("model parameters must share one device")
+    device = devices.pop()
+    if device.type not in ("cpu", "cuda"):
+        raise ValueError("train requires a CPU or CUDA model")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA is unavailable")
     if optimizer is None:
         if start_step:
             raise ValueError("resuming requires the restored optimizer")
@@ -120,6 +128,9 @@ def train(
     initial_loss = 0.0
     final_loss = 0.0
     tokens = 0
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
     started = time.perf_counter()
     for step in range(start_step + 1, end_step + 1):
         input_ids, target_ids = batch_provider()
@@ -137,6 +148,8 @@ def train(
             raise ValueError("batch provider must return matching nonempty CPU long [B, T] tensors")
         for group in optimizer.param_groups:
             group["lr"] = learning_rate_for_step(step, config)
+        input_ids = input_ids.to(device)
+        target_ids = target_ids.to(device)
         optimizer.zero_grad(set_to_none=True)
         loss = model.next_token_loss(input_ids, target_ids)
         if not bool(torch.isfinite(loss)):
@@ -155,6 +168,8 @@ def train(
         if step == start_step + 1:
             initial_loss = final_loss
         tokens += target_ids.numel()
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - started
     completed = end_step - start_step
     return TrainResult(
@@ -163,5 +178,8 @@ def train(
         final_loss=final_loss,
         mean_step_seconds=elapsed / completed,
         tokens_per_second=tokens / elapsed,
+        peak_cuda_memory_bytes=(
+            torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+        ),
         optimizer=optimizer,
     )

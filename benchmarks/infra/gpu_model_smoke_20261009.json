@@ -1,0 +1,1 @@
+{"cuda_device": "Tesla T4", "expected_commit_sha": "39bc1b9cc857115f788f6b604845178677fc2ad0", "finite_gradients": true, "loss": 3.5073606967926025, "parameters_updated": true, "peak_gpu_memory_bytes": 17345024, "status": "PASS", "step_time_s": 1.3913469169999928, "test": "model_cuda_adamw", "tested_commit_sha": "39bc1b9cc857115f788f6b604845178677fc2ad0"}

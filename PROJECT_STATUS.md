@@ -15,6 +15,11 @@ Build an interview-ready foundation-model training and systems project.
   validation fixtures, four optimizer steps, measured metrics, and exact
   checkpoint-resume regression test. See [pilot report](docs/cpu-pretraining-pilot.md)
   and [manifest](experiments/cpu_pilot_20261009.json).
+- Milestone 3 GPU model smoke: one private Kaggle Tesla T4 forward, backward,
+  and AdamW step passed on pinned commit
+  `39bc1b9cc857115f788f6b604845178677fc2ad0`, with finite gradients
+  and an actual parameter update. See [report](docs/kaggle-model-smoke.md)
+  and [verified result](benchmarks/infra/gpu_model_smoke_20261009.json).
 
 ## Infrastructure evidence
 

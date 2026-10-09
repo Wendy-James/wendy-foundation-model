@@ -1,7 +1,7 @@
 # Kaggle single-T4 model smoke preparation
 
 This prepares a **private** Kaggle GPU script pinned to an exact public Git
-commit. It has not been submitted or measured. Kaggle's GPU setting must be
+commit. The first job completed successfully on 2026-10-09. Kaggle's GPU setting must be
 confirmed as **GPU T4 x1** in the kernel settings before launch; the metadata
 requests GPU, but does not encode a GPU model or count. The job needs internet
 to clone the public repository. It uses no dataset and no training-loop code.
@@ -12,6 +12,27 @@ tiny CUDA forward, next-token loss, backward, and AdamW update. Its JSON output
 records the actual loss, CUDA device name, synchronized step time in seconds,
 and peak allocated GPU bytes. This is a functional smoke check, not a throughput
 benchmark or full pretraining run.
+
+## Verified result — 2026-10-09
+
+The [verified result](../benchmarks/infra/gpu_model_smoke_20261009.json) reports
+`PASS` for expected and tested commit
+`39bc1b9cc857115f788f6b604845178677fc2ad0`. The repository verifier
+accepted the downloaded JSON, including both commit SHAs and the assertions
+that gradients were finite and AdamW updated model parameters.
+
+| Observation | Measured value |
+| --- | ---: |
+| CUDA device | Tesla T4 |
+| Next-token loss | 3.5073606967926025 |
+| Synchronized one-step time | 1.3913469169999928 s |
+| Peak allocated GPU memory | 17,345,024 bytes |
+| Finite gradients | true |
+| Parameter update | true |
+
+This is one tiny forward, backward, and optimizer step. Its timing includes
+first-step overhead and is **not** steady-state pretraining throughput. No
+training-loop throughput or validation loss was measured by this job.
 
 ## Terminal-first workflow
 
@@ -48,10 +69,9 @@ cat "$RESULT_DIR/model-smoke-result.json"
 ```
 
 The verifier requires PASS, both matching SHAs, the expected test name, a
-nonempty CUDA device, and positive finite loss, time, and memory measurements.
-The JSON is the evidence; do not report GPU numbers until a real run produces
-it. A failure records only an error class to avoid exposing credentials in
-logs or output.
+nonempty CUDA device, positive finite loss, time, and memory measurements,
+finite gradients, and a parameter update. A failure records only an error
+class to avoid exposing credentials in logs or output.
 
 ## Credentials and optional W&B design
 

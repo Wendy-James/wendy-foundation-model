@@ -27,6 +27,30 @@ def verify_checkout(repo: Path, expected_sha: str) -> str:
     return actual
 
 
+def require_finite_gradients(parameters) -> None:
+    """Require a finite gradient for every trainable parameter."""
+    import torch
+
+    trainable = [parameter for parameter in parameters if parameter.requires_grad]
+    if not trainable or any(
+        parameter.grad is None or not bool(torch.isfinite(parameter.grad).all())
+        for parameter in trainable
+    ):
+        raise ValueError("missing or nonfinite model gradients")
+
+
+def require_parameter_update(before, parameters) -> None:
+    """Require the optimizer to change at least one trainable tensor."""
+    import torch
+
+    after = [parameter.detach() for parameter in parameters if parameter.requires_grad]
+    if len(before) != len(after) or not any(
+        not torch.equal(previous, current)
+        for previous, current in zip(before, after, strict=True)
+    ):
+        raise ValueError("optimizer did not update model parameters")
+
+
 def run_model_check(repo: Path) -> dict[str, object]:
     """Import only the pinned model implementation and run one tiny CUDA update."""
     import torch
@@ -46,6 +70,9 @@ def run_model_check(repo: Path) -> dict[str, object]:
     model = DecoderOnlyTransformer(config).to(device)
     ids = torch.tensor([[1, 2, 3, 4, 5], [5, 4, 3, 2, 1]], device=device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    parameters_before = [
+        parameter.detach().clone() for parameter in model.parameters() if parameter.requires_grad
+    ]
     torch.cuda.synchronize(device)
     torch.cuda.reset_peak_memory_stats(device)
     start = time.perf_counter()
@@ -54,12 +81,16 @@ def run_model_check(repo: Path) -> dict[str, object]:
     if not bool(torch.isfinite(loss)):
         raise ValueError("loss is nonfinite")
     loss.backward()
+    require_finite_gradients(model.parameters())
     optimizer.step()
+    require_parameter_update(parameters_before, model.parameters())
     torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - start
     return {
         "test": "model_cuda_adamw",
         "loss": float(loss.detach().item()),
+        "finite_gradients": True,
+        "parameters_updated": True,
         "cuda_device": torch.cuda.get_device_name(device),
         "step_time_s": elapsed,
         "peak_gpu_memory_bytes": torch.cuda.max_memory_allocated(device),

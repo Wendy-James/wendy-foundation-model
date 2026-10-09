@@ -75,6 +75,10 @@ def verify_result(path: Path, sha: str) -> None:
             raise ValueError(f"result has invalid {key}")
     if not isinstance(result.get("cuda_device"), str) or not result["cuda_device"]:
         raise ValueError("result has no CUDA device")
+    if result.get("finite_gradients") is not True:
+        raise ValueError("result has no finite-gradient proof")
+    if result.get("parameters_updated") is not True:
+        raise ValueError("result has no parameter-update proof")
 
 
 def main() -> None:

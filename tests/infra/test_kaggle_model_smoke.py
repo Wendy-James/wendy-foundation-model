@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import torch
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL = runpy.run_path(str(ROOT / "scripts/infra/prepare_kaggle_model_smoke.py"))
@@ -51,6 +52,22 @@ def test_checkout_verification_before_model_import(monkeypatch, tmp_path):
         REMOTE["verify_checkout"](tmp_path, "bad")
 
 
+def test_finite_gradient_and_parameter_update_checks_on_cpu():
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+    before = [parameter.detach().clone()]
+    with pytest.raises(ValueError, match="gradients"):
+        REMOTE["require_finite_gradients"]([parameter])
+    parameter.grad = torch.tensor([float("nan")])
+    with pytest.raises(ValueError, match="gradients"):
+        REMOTE["require_finite_gradients"]([parameter])
+    parameter.grad = torch.tensor([2.0])
+    REMOTE["require_finite_gradients"]([parameter])
+    with pytest.raises(ValueError, match="did not update"):
+        REMOTE["require_parameter_update"](before, [parameter])
+    torch.optim.AdamW([parameter], lr=0.1).step()
+    REMOTE["require_parameter_update"](before, [parameter])
+
+
 def test_result_validation(tmp_path):
     sha = "d" * 40
     path = tmp_path / "result.json"
@@ -58,12 +75,14 @@ def test_result_validation(tmp_path):
         "status": "PASS", "expected_commit_sha": sha, "tested_commit_sha": sha,
         "test": "model_cuda_adamw", "loss": 3.2, "cuda_device": "Tesla T4",
         "step_time_s": 0.1, "peak_gpu_memory_bytes": 123456,
+        "finite_gradients": True, "parameters_updated": True,
     }
     path.write_text(json.dumps(result))
     LOCAL["verify_result"](path, sha)
     for key, bad in [("tested_commit_sha", "e" * 40), ("loss", float("nan")),
                      ("cuda_device", ""), ("step_time_s", 0),
-                     ("peak_gpu_memory_bytes", -1)]:
+                     ("peak_gpu_memory_bytes", -1), ("finite_gradients", False),
+                     ("parameters_updated", 1)]:
         invalid = {**result, key: bad}
         path.write_text(json.dumps(invalid))
         with pytest.raises(ValueError):

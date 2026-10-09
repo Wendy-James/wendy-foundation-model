@@ -1,0 +1,36 @@
+name: WendyFM overnight runner static checks
+on:
+  pull_request:
+    paths:
+      - 'scripts/infra/overnight_m4.py'
+      - 'docs/overnight-m4-runbook.md'
+      - '.github/workflows/overnight-runner-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile and inspect CLI without starting tasks
+        run: |
+          python -m py_compile scripts/infra/overnight_m4.py
+          python scripts/infra/overnight_m4.py --help | grep -- '--codex-calls'
+          python scripts/infra/overnight_m4.py --help | grep -- '--hours'
+      - name: Verify exactly one GPU submission branch, no merge or paid runners
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          src = Path('scripts/infra/overnight_m4.py').read_text()
+          assert src.count('"kaggle", "kernels", "push"') == 1
+          assert '"--timeout", "300"' in src
+          assert '"--sandbox", "workspace-write"' in src
+          assert '"gh", "pr", "create", "--draft"' in src
+          assert 'gh", "pr", "merge' not in src
+          assert 'choices=(0, 1, 2)' in src
+          print('STATIC SAFETY CHECKS: PASS')
+          PY

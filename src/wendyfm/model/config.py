@@ -6,6 +6,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Model dimensions.
+
+    For BPETokenizer, use tokenizer.spec.config.vocab_size: reserved special
+    IDs may exceed tokenizer.vocab_size when training learns fewer merges.
+    """
+
     vocab_size: int
     d_model: int
     n_heads: int

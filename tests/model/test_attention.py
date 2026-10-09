@@ -86,6 +86,28 @@ def test_prefix_loss_has_no_future_input_gradient_and_all_projections_train() ->
         assert grad is not None and torch.isfinite(grad).all() and grad.abs().sum() > 0
 
 
+def test_reference_attention_keeps_large_half_precision_scores_finite() -> None:
+    attention = CausalSelfAttention(_config()).half()
+    with torch.no_grad():
+        for projection in (
+            attention.q_proj,
+            attention.k_proj,
+            attention.v_proj,
+            attention.out_proj,
+        ):
+            projection.weight.copy_(torch.eye(8, dtype=torch.float16))
+    x = torch.tensor(
+        [[[1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          [0.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]],
+        dtype=torch.float16,
+        requires_grad=True,
+    )
+    output = attention(x)
+    assert torch.isfinite(output).all()
+    output.float().sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
 @pytest.mark.parametrize("shape", [(2, 8), (2, 3, 7), (2, 0, 8), (2, 13, 8)])
 def test_attention_rejects_invalid_input_shape(shape: tuple[int, ...]) -> None:
     with pytest.raises(ValueError):

@@ -31,7 +31,7 @@ A separate pair of research windows (A1/A2) belongs to the SFT/GRPO paper. Wendy
 - A GitHub Actions **integration smoke** workflow exists on branch `test/chatgpt-github-link-20261009` (draft PR #1); it is **not on `main`** as of this review. The workflow has previously run its syntax and pytest checks according to operator evidence. Do not imply it protects all branches or runs by default.
 - Codex Cloud has accessed the repository for independent review/lightweight work, with prior reported tests and Ruff validation.
 - Mac → Kaggle API, pinned Git SHA Kaggle tokenizer test, results download/verification, Mac → W&B online metric logging and Hugging Face CLI authentication were previously validated; see [connectivity runbook](environment-connectivity.md).
-- WendyFM one-step private Kaggle Tesla T4 CUDA/AdamW smoke has a saved result: [verified JSON](../benchmarks/infra/gpu_model_smoke_20261009.json). A one-step GPU smoke is **not** a full GPU pretraining benchmark.
+- WendyFM one-step private Kaggle Tesla T4 CUDA/AdamW smoke has a saved result: [verified JSON on the M3 feature branch](https://github.com/Wendy-James/wendy-foundation-model/blob/feat/m3-training-loop/benchmarks/infra/gpu_model_smoke_20261009.json). A one-step GPU smoke is **not** a full GPU pretraining benchmark.
 
 ### Not automatically established
 

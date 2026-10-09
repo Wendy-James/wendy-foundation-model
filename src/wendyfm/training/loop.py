@@ -48,7 +48,11 @@ class TrainConfig:
 
 @dataclass(frozen=True)
 class TrainResult:
-    """Losses are measured before the first and last updates of this call."""
+    """Losses precede this call's first/last updates.
+
+    Timing spans sampling, forward/backward, and optimizer work. Throughput is
+    target tokens divided by wall time, so timing metrics are not reproducible.
+    """
 
     step: int
     initial_loss: float

@@ -84,6 +84,42 @@ def test_minimum_length_window_includes_final_target() -> None:
     assert targets[0].tolist() == [4, 5, 6]
 
 
+def test_sampler_state_restores_next_draw_and_is_independent_of_returned_state() -> None:
+    ids = torch.arange(20, dtype=torch.long)
+    source = NextTokenBatchSampler(ids, seq_len=5, model_vocab_size=20, seed=42)
+    source.sample(3)
+    state = source.state_dict()
+    restored = NextTokenBatchSampler(ids.clone(), seq_len=5, model_vocab_size=20, seed=999)
+    restored.load_state_dict(state)
+    state["generator_state"].zero_()
+    for batch_size in (4, 2, 7):
+        for actual, expected in zip(restored.sample(batch_size), source.sample(batch_size)):
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_sampler_state_rejects_configuration_stream_and_corruption() -> None:
+    ids = torch.arange(20, dtype=torch.long)
+    source = NextTokenBatchSampler(ids, seq_len=5, model_vocab_size=20, seed=42)
+    state = source.state_dict()
+    variants = (
+        (NextTokenBatchSampler(ids, seq_len=4, model_vocab_size=20, seed=1), "seq_len"),
+        (NextTokenBatchSampler(ids, seq_len=5, model_vocab_size=21, seed=1), "model_vocab_size"),
+        (NextTokenBatchSampler(ids[:-1], seq_len=5, model_vocab_size=20, seed=1), "token_count"),
+        (NextTokenBatchSampler(ids.flip(0), seq_len=5, model_vocab_size=20, seed=1),
+         "token stream"),
+    )
+    for sampler, message in variants:
+        with pytest.raises(ValueError, match=message):
+            sampler.load_state_dict(state)
+    bad = {**state, "generator_state": torch.tensor([1], dtype=torch.uint8)}
+    with pytest.raises(ValueError, match="generator state"):
+        source.load_state_dict(bad)
+    with pytest.raises(ValueError, match="token stream"):
+        source.load_state_dict({**state, "token_sha256": torch.tensor([1, 2])})
+    with pytest.raises(ValueError, match="sampler state"):
+        source.load_state_dict({**state, "extra": 0})
+
+
 @pytest.mark.parametrize(
     "documents,boundary,error",
     [

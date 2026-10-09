@@ -60,6 +60,15 @@ def test_schedule_uses_one_based_global_update_steps() -> None:
     assert rates[2:] == sorted(rates[2:], reverse=True)
 
 
+def test_metrics_count_targets_and_elapsed_training_time(monkeypatch) -> None:
+    times = iter((10.0, 14.0))
+    monkeypatch.setattr("wendyfm.training.loop.time.perf_counter", lambda: next(times))
+    result = train(_model(), _batch, TrainConfig(max_steps=1))
+    assert result.initial_loss == result.final_loss
+    assert result.mean_step_seconds == 4.0
+    assert result.tokens_per_second == 2.0  # 2 sequences x 4 targets / 4 seconds
+
+
 def test_rejects_invalid_batch_and_nonfinite_loss() -> None:
     model = _model()
     with pytest.raises(ValueError, match="batch provider"):

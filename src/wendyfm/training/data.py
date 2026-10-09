@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping, Set
 
 import torch
@@ -94,7 +95,58 @@ class NextTokenBatchSampler:
 
         self.token_ids = token_ids
         self.seq_len = seq_len
+        self.model_vocab_size = model_vocab_size
         self._generator = torch.Generator(device="cpu").manual_seed(seed)
+
+    def _token_stream_digest(self) -> str:
+        """Hash the token values in byte order without a NumPy dependency."""
+        digest = hashlib.sha256()
+        octets = self.token_ids.contiguous().view(torch.uint8)
+        for start in range(0, octets.numel(), 1 << 20):
+            digest.update(bytes(octets[start : start + (1 << 20)].tolist()))
+        return digest.hexdigest()
+
+    def state_dict(self) -> dict:
+        """Capture the exact next draw and the stream/configuration it belongs to."""
+        return {
+            "seq_len": self.seq_len,
+            "model_vocab_size": self.model_vocab_size,
+            "token_count": self.token_ids.numel(),
+            "token_sha256": self._token_stream_digest(),
+            "generator_state": self._generator.get_state().clone(),
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore only a state produced for this exact token stream and setup."""
+        if not isinstance(state, dict) or set(state) != {
+            "seq_len", "model_vocab_size", "token_count", "token_sha256", "generator_state"
+        }:
+            raise ValueError("invalid sampler state")
+        for key, expected in (
+            ("seq_len", self.seq_len),
+            ("model_vocab_size", self.model_vocab_size),
+            ("token_count", self.token_ids.numel()),
+        ):
+            if type(state[key]) is not int or state[key] != expected:
+                raise ValueError(f"incompatible sampler {key}")
+        if type(state["token_sha256"]) is not str or (
+            state["token_sha256"] != self._token_stream_digest()
+        ):
+            raise ValueError("incompatible sampler token stream")
+        generator_state = state["generator_state"]
+        if (
+            not isinstance(generator_state, torch.Tensor)
+            or generator_state.device.type != "cpu"
+            or generator_state.dtype != torch.uint8
+            or generator_state.ndim != 1
+        ):
+            raise ValueError("invalid sampler generator state")
+        try:
+            probe = torch.Generator(device="cpu")
+            probe.set_state(generator_state)
+        except RuntimeError as exc:
+            raise ValueError("invalid sampler generator state") from exc
+        self._generator.set_state(generator_state.clone())
 
     def sample(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Return independent, seeded windows with exactly one target shift."""

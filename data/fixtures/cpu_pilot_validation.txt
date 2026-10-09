@@ -1,0 +1,3 @@
+a held out sentence checks how the small model predicts tokens.
+validation uses separate text and does not update model weights.
+the tokenizer turns this unseen sentence into byte level pieces.

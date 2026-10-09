@@ -1,0 +1,8 @@
+the small model reads a short sentence and predicts the next word.
+the small model learns from repeated patterns in a tiny corpus.
+a token follows another token in the training sequence.
+the training loop updates weights after each sampled batch.
+the tokenizer turns text into byte level pieces for the model.
+the small model reads a short sentence and predicts the next word.
+the training loop updates weights after each sampled batch.
+the tokenizer turns text into byte level pieces for the model.

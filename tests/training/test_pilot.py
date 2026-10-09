@@ -52,7 +52,10 @@ def test_pilot_saves_metrics_and_exact_resume(tmp_path) -> None:
     uninterrupted = torch.load(full_dir / "checkpoint.pt", weights_only=True)
     continued = torch.load(split_dir / "checkpoint.pt", weights_only=True)
     assert uninterrupted["format_version"] == continued["format_version"] == 3
-    for key in ("model", "optimizer", "step", "sampler", "exact_metadata"):
+    for key in (
+        "model", "optimizer", "step", "sampler", "exact_metadata",
+        "torch_rng_state", "python_rng_state",
+    ):
         _assert_equal_tree(uninterrupted[key], continued[key])
 
 

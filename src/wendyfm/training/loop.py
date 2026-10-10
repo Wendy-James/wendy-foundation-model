@@ -61,6 +61,7 @@ class TrainResult:
     tokens_per_second: float
     peak_cuda_memory_bytes: int | None
     optimizer: torch.optim.AdamW
+    peak_cuda_reserved_bytes: int | None = None
 
 
 def learning_rate_for_step(step: int, config: TrainConfig) -> float:
@@ -86,6 +87,7 @@ def train(
     optimizer: torch.optim.AdamW | None = None,
     start_step: int = 0,
     end_step: int | None = None,
+    step_observer: Callable[[int, float, float], None] | None = None,
 ) -> TrainResult:
     """Train through end_step (default max_steps), using global schedule steps.
 
@@ -165,6 +167,10 @@ def train(
             raise FloatingPointError(f"nonfinite gradient norm at step {step}")
         optimizer.step()
         final_loss = float(loss.detach())
+        if step_observer is not None:
+            if any(not bool(torch.isfinite(parameter).all()) for parameter in model.parameters()):
+                raise FloatingPointError(f"nonfinite parameter at step {step}")
+            step_observer(step, final_loss, float(grad_norm))
         if step == start_step + 1:
             initial_loss = final_loss
         tokens += target_ids.numel()
@@ -182,4 +188,7 @@ def train(
             torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
         ),
         optimizer=optimizer,
+        peak_cuda_reserved_bytes=(
+            torch.cuda.max_memory_reserved(device) if device.type == "cuda" else None
+        ),
     )

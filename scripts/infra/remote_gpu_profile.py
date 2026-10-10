@@ -7,23 +7,35 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 EXPECTED_COMMIT_SHA = "__WENDYFM_COMMIT_SHA__"
 PUBLIC_REPO_URL = "https://github.com/Wendy-James/wendy-foundation-model.git"
 RESULT_PATH = Path("/kaggle/working/m5-profile-result.json")
+TOTAL_TIMEOUT_SECONDS = 300
 
 
-def verify_checkout(repo: Path) -> None:
+def remaining_seconds(started: float, stage_limit: int) -> float:
+    remaining = TOTAL_TIMEOUT_SECONDS - (time.monotonic() - started)
+    if remaining <= 0:
+        raise TimeoutError("M5 profile wrapper exceeded its runtime budget")
+    return min(remaining, stage_limit)
+
+
+def verify_checkout(repo: Path, *, timeout: float = 10) -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", EXPECTED_COMMIT_SHA):
         raise ValueError("invalid commit pin")
-    actual = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                            check=True, capture_output=True, text=True, timeout=10).stdout.strip()
+    actual = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True, timeout=timeout,
+    ).stdout.strip()
     if actual != EXPECTED_COMMIT_SHA:
         raise ValueError("checkout SHA mismatch")
 
 
 def main() -> None:
+    started = time.monotonic()
     record: dict = {"status": "FAIL", "expected_commit_sha": EXPECTED_COMMIT_SHA,
                     "tested_commit_sha": None, "test": "m5_phase_a_fp32"}
     try:
@@ -31,18 +43,19 @@ def main() -> None:
             repo = Path(directory) / "wendyfm"
             subprocess.run(["git", "-c", "credential.helper=", "clone", "--quiet",
                             PUBLIC_REPO_URL, str(repo)], check=True, capture_output=True,
-                           text=True, timeout=60)
+                           text=True, timeout=remaining_seconds(started, 60))
             subprocess.run(["git", "-C", str(repo), "checkout", "--quiet", "--detach",
                             EXPECTED_COMMIT_SHA], check=True, capture_output=True,
-                           text=True, timeout=30)
-            verify_checkout(repo)
+                           text=True, timeout=remaining_seconds(started, 30))
+            verify_checkout(repo, timeout=remaining_seconds(started, 10))
             record["tested_commit_sha"] = EXPECTED_COMMIT_SHA
             output = Path(directory) / "result.json"
             try:
                 subprocess.run([sys.executable, str(repo / "scripts/profile_gpu.py"),
                                 "--expected-sha", EXPECTED_COMMIT_SHA,
                                 "--output", str(output)], cwd=repo, check=True,
-                               capture_output=True, text=True, timeout=300)
+                               capture_output=True, text=True,
+                               timeout=remaining_seconds(started, TOTAL_TIMEOUT_SECONDS))
             finally:
                 if output.exists():
                     record["manifest"] = json.loads(output.read_text(encoding="utf-8"))

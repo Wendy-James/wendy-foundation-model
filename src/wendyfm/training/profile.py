@@ -123,6 +123,12 @@ def _preflight(model: DecoderOnlyTransformer, sampler: NextTokenBatchSampler,
         raise FloatingPointError("nonfinite parameter after M4 reference step")
 
 
+def _check_fp32_model(model: DecoderOnlyTransformer) -> None:
+    if any(parameter.device != torch.device("cuda:0") or parameter.dtype != torch.float32
+           for parameter in model.parameters()):
+        raise ValueError("profile model must have only FP32 parameters on cuda:0")
+
+
 def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
     torch.manual_seed(settings["seed"])
     random.seed(settings["seed"])
@@ -137,6 +143,7 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
     prior_parameters: list[torch.Tensor] | None = None
     phase = "preflight"
     try:
+        _check_fp32_model(model)
         if index == 1:
             # The reference check uses the actual M4 train() path, outside timing.
             _preflight(model, sampler, settings["batch_size"], config)
@@ -150,6 +157,7 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
             sampler = NextTokenBatchSampler(ids, seq_len=settings["model"]["max_seq_len"],
                                             model_vocab_size=settings["model"]["vocab_size"],
                                             seed=settings["seed"])
+            _check_fp32_model(model)
         phase = "warmup"
         train(model, lambda: sampler.sample(settings["batch_size"]), config,
               optimizer=optimizer, end_step=settings["warmup_steps"])
@@ -216,12 +224,15 @@ def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise RuntimeError("exactly one CUDA device is required")
+        result["cuda_device_count"] = 1
         torch.use_deterministic_algorithms(True)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cudnn.benchmark = False
         torch.set_num_threads(settings["cpu_threads"])
         device = torch.cuda.get_device_properties(0)
+        if "T4" not in device.name:
+            raise RuntimeError("Phase A requires one Tesla T4 GPU")
         result.update({"gpu_name": device.name, "gpu_total_memory_bytes": device.total_memory,
                        "torch_version": str(torch.__version__), "cuda_version": torch.version.cuda,
                        "parameter_count": sum(p.numel() for p in DecoderOnlyTransformer(

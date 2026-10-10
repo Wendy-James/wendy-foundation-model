@@ -41,6 +41,9 @@ the last measured update must change a parameter. The result includes all
 30 per-step loss and gradient-norm observations per repeat. The reported
 throughput median and `(max - min) / median` spread retain all three repeats;
 spread above 10% marks the baseline unstable.
+The runner rejects a non-T4 device or any model parameter that is not FP32 on
+`cuda:0`. Local result verification requires the pinned fixture hash, one CUDA
+device, software and GPU identity, and consistent elapsed-time arithmetic.
 
 ## Run later, after Phase B approval
 
@@ -56,9 +59,10 @@ Before starting a job, check free T4 quota, private metadata, one visible GPU,
 and the pinned SHA. The package contains only the wrapper and metadata; it
 clones the public pinned commit, uses the committed local fixture, and has no
 dataset attachments or credentials. Submit **one** free private Kaggle job,
-with zero retries and no paid compute. The profiling subprocess has a
-300-second timeout; set a 300-second external job watchdog as well, covering
-clone and setup time. Stop on a SHA, device-count, metadata, alignment,
+with zero retries and no paid compute. The wrapper enforces a
+300-second total deadline across clone, checkout, and profiling; set
+a 300-second external job watchdog as well, covering Kaggle startup time.
+Stop on a SHA, device-count, metadata, alignment,
 finiteness, update, or timeout failure. The wrapper writes
 `/kaggle/working/m5-profile-result.json`, including a failure record when the
 profile process writes one. Do not resubmit the same failed job automatically.
@@ -70,7 +74,7 @@ python scripts/infra/prepare_kaggle_gpu_profile.py verify \
   --result /path/to/m5-profile-result.json --sha FULL_COMMIT_SHA
 ```
 
-The SHA and config hash checks fail closed. The verifier checks the completed
+The SHA, config, and fixture hash checks fail closed. The verifier checks the completed
 repeat counts and token arithmetic. Keep downloaded results outside Git until
 reviewed for the separate Phase B evidence PR. Do not interpret this fixture
 run as a language-quality or scaling-law result.

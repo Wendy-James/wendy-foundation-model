@@ -52,12 +52,31 @@ def verify_result(path: Path, sha: str) -> dict:
         "test": "m5_phase_a_fp32"}.items()):
         raise ValueError("wrapper status or SHA mismatch")
     result = wrapper.get("manifest")
+    settings = json.loads(CONFIG.read_text(encoding="utf-8"))
+    train_text = (CONFIG.parent / settings["train_text"]).resolve()
     if not isinstance(result, dict) or any(result.get(key) != value for key, value in {
         "status": "PASS", "source_commit_sha": sha, "precision": "fp32", "device": "cuda:0",
+        "cuda_device_count": 1,
         "batch_size": 4, "sequence_length": 16, "warmup_steps": 5,
         "measured_steps": 30, "requested_repeats": 3, "retries": 0,
-        "config_sha256": hashlib.sha256(CONFIG.read_bytes()).hexdigest()}.items()):
+        "config_sha256": hashlib.sha256(CONFIG.read_bytes()).hexdigest(),
+        "train_text_sha256": hashlib.sha256(train_text.read_bytes()).hexdigest()}.items()):
         raise ValueError("manifest provenance or baseline mismatch")
+    if type(result["cuda_device_count"]) is not int:
+        raise ValueError("invalid CUDA device count")
+    if any(not isinstance(result.get(key), str) or not result[key] for key in
+           ("torch_version", "cuda_version", "driver_version")):
+        raise ValueError("missing CUDA or PyTorch identity")
+    if not isinstance(result.get("gpu_name"), str) or "T4" not in result["gpu_name"]:
+        raise ValueError("Phase A requires a Tesla T4 GPU")
+    for key in ("gpu_total_memory_bytes", "gpu_power_limit_watts", "parameter_count"):
+        value = result.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (
+            not math.isfinite(value) or value <= 0
+        ):
+            raise ValueError(f"invalid {key}")
+    if any(type(result[key]) is not int for key in ("gpu_total_memory_bytes", "parameter_count")):
+        raise ValueError("invalid GPU memory or parameter count type")
     repeats = result.get("repeats")
     if not isinstance(repeats, list) or len(repeats) != 3:
         raise ValueError("expected three independent repeats")
@@ -81,6 +100,9 @@ def verify_result(path: Path, sha: str) -> dict:
         if (repeat["peak_allocated_bytes"] < repeat["allocated_baseline_bytes"]
                 or repeat["peak_reserved_bytes"] < repeat["reserved_baseline_bytes"]):
             raise ValueError("peak memory below warmup baseline")
+        if not math.isclose(repeat["mean_step_seconds"], repeat["elapsed_seconds"] / 30,
+                            rel_tol=1e-9):
+            raise ValueError("mean step timing mismatch")
         if not math.isclose(repeat["target_tokens_per_second"], 1920 / repeat["elapsed_seconds"],
                             rel_tol=1e-9):
             raise ValueError("target-token accounting mismatch")
@@ -91,11 +113,14 @@ def verify_result(path: Path, sha: str) -> dict:
                 isinstance(observation.get(key), bool)
                 or not isinstance(observation.get(key), (int, float))
                 or not math.isfinite(observation[key])
+                or observation[key] < 0
                 for key in ("loss", "gradient_norm")
             ):
                 raise ValueError("invalid measured step observation")
-    if not isinstance(result.get("gpu_name"), str) or not result["gpu_name"]:
-        raise ValueError("missing GPU identity")
+        for key, expected in (("loss_min", min(step["loss"] for step in repeat["steps"])),
+                              ("loss_max", max(step["loss"] for step in repeat["steps"]))):
+            if repeat.get(key) != expected:
+                raise ValueError(f"invalid {key}")
     return result
 
 

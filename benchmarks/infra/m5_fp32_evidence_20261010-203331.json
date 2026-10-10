@@ -1,0 +1,39 @@
+{
+  "experiment": "M5 Phase B · bounded single-visible-T4 FP32 profiling",
+  "gpu_name": "Tesla T4",
+  "gpu_verified_measured_seconds": 1.574514,
+  "kaggle_kernel": "wendyzhan040513/wendyfm-m5-fp32-profile",
+  "measured_steps_per_repeat": 30,
+  "median_target_tokens_per_second": 3664.3787837812915,
+  "note": "Tiny fixed-fixture performance sanity check, not a language-quality or scaling-law result.",
+  "per_repeat": [
+    {
+      "elapsed_seconds": 0.5330451049999851,
+      "peak_allocated_bytes": 68143616,
+      "peak_reserved_bytes": 69206016,
+      "repeat": 1,
+      "target_tokens_per_second": 3601.9465932438375
+    },
+    {
+      "elapsed_seconds": 0.5175060290000033,
+      "peak_allocated_bytes": 68143616,
+      "peak_reserved_bytes": 69206016,
+      "repeat": 2,
+      "target_tokens_per_second": 3710.101703955197
+    },
+    {
+      "elapsed_seconds": 0.5239632999999912,
+      "peak_allocated_bytes": 68143616,
+      "peak_reserved_bytes": 69206016,
+      "repeat": 3,
+      "target_tokens_per_second": 3664.3787837812915
+    }
+  ],
+  "repeats": 3,
+  "result_json_sha256": "38886478b226d743c292235255781d8a98aaac156d445d1be50a347c4e65dfa8",
+  "source_commit_sha": "48e0c3ee29d273df49186c2a9c0f528fb71889a2",
+  "target_tokens_per_repeat": 1920,
+  "throughput_spread": 0.02951526495843145,
+  "unstable": false,
+  "warmup_steps_per_repeat": 5
+}

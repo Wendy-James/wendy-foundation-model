@@ -1,8 +1,9 @@
-"""Atomic CPU checkpoints for exact model, optimizer, and RNG continuation.
+"""Atomic checkpoints for exact model, optimizer, and RNG continuation.
 
 Format v1 contains no sampler; v2 contains sampler state. Both remain loadable.
 Format v3 also fingerprints the training and model configurations and batch
 size. Its scheduler is defined by the saved global step and TrainConfig.
+Format v4 adds the CUDA device index and its RNG state; CPU saves remain v3.
 """
 
 import hashlib
@@ -20,6 +21,7 @@ from .data import NextTokenBatchSampler
 from .loop import TrainConfig, learning_rate_for_step
 
 FORMAT_VERSION = 3
+CUDA_FORMAT_VERSION = 4
 _LEGACY_KEYS = {
     "format_version", "model", "optimizer", "step", "torch_rng_state", "python_rng_state"
 }
@@ -57,7 +59,7 @@ def save_checkpoint(
     config: TrainConfig | None = None,
     batch_size: int | None = None,
 ) -> None:
-    """Atomically write v1 without a sampler or a fingerprinted v3 checkpoint."""
+    """Atomically write v1, fingerprinted CPU v3, or CUDA v4."""
     if isinstance(step, bool) or not isinstance(step, int) or step < 0:
         raise ValueError("step must be a nonnegative integer")
     if sampler is not None and not isinstance(sampler, NextTokenBatchSampler):
@@ -71,9 +73,19 @@ def save_checkpoint(
         expected_lr = config.learning_rate if step == 0 else learning_rate_for_step(step, config)
         if any(group["lr"] != expected_lr for group in optimizer.param_groups):
             raise ValueError("optimizer learning rate does not match scheduler step")
+    devices = {parameter.device for parameter in model.parameters()}
+    if len(devices) != 1:
+        raise ValueError("model parameters must share one device")
+    device = devices.pop()
+    if device.type == "cuda" and metadata is None:
+        raise ValueError("CUDA checkpoints require sampler, config, and batch_size")
+    if device.type not in ("cpu", "cuda"):
+        raise ValueError("unsupported checkpoint device")
     destination = Path(path)
     payload = {
-        "format_version": FORMAT_VERSION if metadata is not None else 1,
+        "format_version": (
+            CUDA_FORMAT_VERSION if device.type == "cuda" else FORMAT_VERSION if metadata else 1
+        ),
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "step": step,
@@ -84,6 +96,9 @@ def save_checkpoint(
         payload["sampler"] = sampler.state_dict()
     if metadata is not None:
         payload["exact_metadata"] = metadata
+    if device.type == "cuda":
+        payload["cuda_device_index"] = device.index
+        payload["cuda_rng_state"] = torch.cuda.get_rng_state(device)
     temporary: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -108,7 +123,7 @@ def load_checkpoint(
     config: TrainConfig | None = None,
     batch_size: int | None = None,
 ) -> int:
-    """Restore completed updates and all RNG states; validate v3 fingerprints."""
+    """Restore completed updates and RNG states; validate exact fingerprints."""
     try:
         payload = torch.load(path, map_location="cpu", weights_only=True)
     except Exception as exc:
@@ -116,18 +131,20 @@ def load_checkpoint(
     if not isinstance(payload, dict):
         raise ValueError("invalid checkpoint contents")
     version = payload.get("format_version")
-    if type(version) is not int or version not in (1, 2, FORMAT_VERSION):
+    if type(version) is not int or version not in (1, 2, FORMAT_VERSION, CUDA_FORMAT_VERSION):
         raise ValueError("unsupported checkpoint format version")
     required = _LEGACY_KEYS | ({"sampler"} if version >= 2 else set())
-    if version == FORMAT_VERSION:
+    if version >= FORMAT_VERSION:
         required |= {"exact_metadata"}
+    if version == CUDA_FORMAT_VERSION:
+        required |= {"cuda_device_index", "cuda_rng_state"}
     if set(payload) != required:
         raise ValueError("invalid checkpoint contents")
     if (version == 1 and sampler is not None) or (version >= 2 and sampler is None):
         raise ValueError("checkpoint sampler state does not match restore request")
     if sampler is not None and not isinstance(sampler, NextTokenBatchSampler):
         raise TypeError("sampler must be a NextTokenBatchSampler")
-    if version == FORMAT_VERSION:
+    if version >= FORMAT_VERSION:
         if config is None or batch_size is None:
             raise ValueError("checkpoint requires config and batch_size")
         expected = _exact_metadata(model, config, batch_size)
@@ -146,6 +163,27 @@ def load_checkpoint(
         raise ValueError("invalid checkpoint step")
     if config is not None and step > config.max_steps:
         raise ValueError("checkpoint step exceeds config max_steps")
+    model_devices = {parameter.device for parameter in model.parameters()}
+    if len(model_devices) != 1:
+        raise ValueError("model parameters must share one device")
+    device = model_devices.pop()
+    if version == CUDA_FORMAT_VERSION:
+        if (
+            device.type != "cuda"
+            or type(payload["cuda_device_index"]) is not int
+            or payload["cuda_device_index"] != device.index
+        ):
+            raise ValueError("checkpoint CUDA device does not match model")
+        cuda_rng = payload["cuda_rng_state"]
+        if (
+            not isinstance(cuda_rng, torch.Tensor)
+            or cuda_rng.device.type != "cpu"
+            or cuda_rng.dtype != torch.uint8
+            or cuda_rng.ndim != 1
+        ):
+            raise ValueError("invalid checkpoint CUDA RNG state")
+    elif device.type == "cuda":
+        raise ValueError("checkpoint has no CUDA RNG state")
     if not isinstance(payload["model"], dict) or not isinstance(payload["optimizer"], dict):
         raise ValueError("invalid checkpoint state")
     rng = payload["torch_rng_state"]
@@ -174,6 +212,8 @@ def load_checkpoint(
         optimizer.load_state_dict(payload["optimizer"])
         torch.set_rng_state(rng)
         random.setstate(payload["python_rng_state"])
+        if version == CUDA_FORMAT_VERSION:
+            torch.cuda.set_rng_state(cuda_rng, device=device)
     except Exception as exc:
         raise ValueError(f"invalid checkpoint state: {exc}") from exc
     return step

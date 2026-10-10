@@ -26,7 +26,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           src = Path('scripts/infra/overnight_m4.py').read_text()
-          assert src.count('"kaggle", "kernels", "push"') == 1
+          assert src.count('["kaggle", "kernels", "push", "-p"') == 1
+          assert src.count('["kaggle", "kernels", "push", "--help"') == 1
           assert '"--timeout", "300"' in src
           assert '"--sandbox", "workspace-write"' in src
           assert '"gh", "pr", "create", "--draft"' in src

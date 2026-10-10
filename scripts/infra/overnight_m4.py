@@ -305,6 +305,8 @@ def main():
     ap.add_argument("--repo", type=Path,
                     default=Path.home() / "workspaces/projects/wendyfm-m4-gpu")
     ap.add_argument("--hours", type=float, default=14.5)
+    ap.add_argument("--gpu-only", action="store_true",
+                    help="recover one bounded GPU task without Codex or restarting active monitor")
     ap.add_argument("--codex-calls", type=int, choices=(0, 1, 2), default=2)
     ap.add_argument("--codex-minutes", type=int, default=20)
     args = ap.parse_args()
@@ -313,15 +315,18 @@ def main():
     global root, repo, finish_at, state
     repo = args.repo.expanduser().resolve()
     root = Path.home() / "wendyfm-overnight" / (
-        "m4-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        ("m4-gpu-only-" if args.gpu_only else "m4-")
+        + dt.datetime.now().strftime("%Y%m%d-%H%M%S"))
     root.mkdir(parents=True, exist_ok=False)
-    (root.parent / "latest-m4.txt").write_text(str(root) + "\n")
-    lock = (root.parent / "m4.lock").open("w")
+    (root.parent / ("latest-m4-gpu-only.txt" if args.gpu_only
+                    else "latest-m4.txt")).write_text(str(root) + "\n")
+    lock = (root.parent / ("m4-gpu-only.lock" if args.gpu_only
+                           else "m4.lock")).open("w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("Another overnight M4 controller is running")
-    finish_at = time.monotonic() + 3600 * args.hours
+    finish_at = time.monotonic() + (7200 if args.gpu_only else 3600 * args.hours)
     state = {"meta": {"utc": stamp(), "hours": args.hours,
                       "max_codex_calls": args.codex_calls,
                       "max_codex_minutes_each": args.codex_minutes,
@@ -333,6 +338,15 @@ def main():
     except Exception as e:
         record("controller", "BLOCKED", str(e))
         raise SystemExit(2)
+    if args.gpu_only:
+        record("controller", "GPU_ONLY_RUNNING", "one private bounded Kaggle job, zero Codex calls")
+        gpu_worker()
+        accepted = state.get("gpu", {}).get("status") == "PASS"
+        record("controller", "GPU_ONLY_DONE" if accepted else "GPU_ONLY_BLOCKED",
+               "No retries or additional Codex calls")
+        if not accepted:
+            raise SystemExit(1)
+        return
     record("controller", "RUNNING", "GPU x1 and bounded Codex work in parallel")
     with ThreadPoolExecutor(max_workers=2) as pool:
         g = pool.submit(gpu_worker)

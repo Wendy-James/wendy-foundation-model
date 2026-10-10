@@ -140,7 +140,6 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
                                     model_vocab_size=settings["model"]["vocab_size"],
                                     seed=settings["seed"])
     observations: list[dict] = []
-    prior_parameters: list[torch.Tensor] | None = None
     phase = "preflight"
     try:
         _check_fp32_model(model)
@@ -161,27 +160,25 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
         phase = "warmup"
         train(model, lambda: sampler.sample(settings["batch_size"]), config,
               optimizer=optimizer, end_step=settings["warmup_steps"])
+        prior_parameters = [parameter.detach().cpu().clone() for parameter in model.parameters()]
         device = torch.device("cuda:0")
         torch.cuda.synchronize(device)
         allocated = torch.cuda.memory_allocated(device)
         reserved = torch.cuda.memory_reserved(device)
 
         def observe(step: int, loss: float, grad_norm: float) -> None:
-            nonlocal prior_parameters
             observations.append({"step": step, "loss": loss, "gradient_norm": grad_norm})
-            if step == config.max_steps - 1:
-                prior_parameters = [parameter.detach().clone() for parameter in model.parameters()]
 
         phase = "measurement"
         result = train(model, lambda: sampler.sample(settings["batch_size"]), config,
                        optimizer=optimizer, start_step=settings["warmup_steps"],
                        step_observer=observe)
-        changed = prior_parameters is not None and any(
-            not torch.equal(old, new) for old, new
+        changed = any(
+            not torch.equal(old, new.detach().cpu()) for old, new
             in zip(prior_parameters, model.parameters(), strict=True)
         )
         if not changed:
-            raise ValueError("last measured optimizer step did not update parameters")
+            raise ValueError("measured optimizer steps did not update parameters")
         elapsed = result.mean_step_seconds * settings["measured_steps"]
         tokens = (settings["measured_steps"] * settings["batch_size"]
                   * settings["model"]["max_seq_len"])
@@ -192,7 +189,7 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
                 "allocated_baseline_bytes": allocated, "reserved_baseline_bytes": reserved,
                 "peak_allocated_bytes": result.peak_cuda_memory_bytes,
                 "peak_reserved_bytes": result.peak_cuda_reserved_bytes,
-                "last_update_changed_parameter": changed,
+                "measured_run_changed_parameter": changed,
                 "loss_min": min(item["loss"] for item in observations),
                 "loss_max": max(item["loss"] for item in observations),
                 "steps": observations}

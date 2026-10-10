@@ -50,7 +50,7 @@ def test_result_rejects_incomplete_or_mismatched_repeats(tmp_path) -> None:
     train_hash = LOCAL["hashlib"].sha256(train_text.read_bytes()).hexdigest()
     repeats = [{"status": "PASS", "repeat": i, "warmup_steps": 5,
                 "measured_steps": 30, "target_tokens": 1920,
-                "last_update_changed_parameter": True, "elapsed_seconds": 2.0,
+                "measured_run_changed_parameter": True, "elapsed_seconds": 2.0,
                 "mean_step_seconds": 2 / 30, "target_tokens_per_second": 960.0,
                 "allocated_baseline_bytes": 50, "reserved_baseline_bytes": 100,
                 "peak_allocated_bytes": 100, "peak_reserved_bytes": 200,
@@ -66,6 +66,8 @@ def test_result_rejects_incomplete_or_mismatched_repeats(tmp_path) -> None:
                 "cuda_version": "12.1", "driver_version": "550.0",
                 "gpu_total_memory_bytes": 16_000_000_000,
                 "gpu_power_limit_watts": 70.0, "parameter_count": 100_000,
+                "median_target_tokens_per_second": 960.0,
+                "throughput_spread": 0.0, "unstable": False,
                 "repeats": repeats}
     wrapper = {"status": "PASS", "expected_commit_sha": sha,
                "tested_commit_sha": sha, "test": "m5_phase_a_fp32", "manifest": manifest}
@@ -86,6 +88,7 @@ def test_result_rejects_incomplete_or_mismatched_repeats(tmp_path) -> None:
          "timing"),
         (lambda data: data["manifest"]["repeats"][0]["steps"][0].update(gradient_norm=-1),
          "observation"),
+        (lambda data: data["manifest"].update(throughput_spread=0.2), "aggregation"),
     ):
         changed = copy.deepcopy(valid_wrapper)
         mutate(changed)

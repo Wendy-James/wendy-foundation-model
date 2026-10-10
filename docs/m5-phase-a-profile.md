@@ -37,7 +37,7 @@ are PyTorch CUDA allocator statistics during the measured interval, including
 live model and optimizer state. Warmup-end allocated and reserved baselines
 are reported separately. These values are not total device memory use.
 Every measured loss, gradient norm, and parameter is checked for finiteness;
-the last measured update must change a parameter. The result includes all
+the measured run must change a parameter. The result includes all
 30 per-step loss and gradient-norm observations per repeat. The reported
 throughput median and `(max - min) / median` spread retain all three repeats;
 spread above 10% marks the baseline unstable.

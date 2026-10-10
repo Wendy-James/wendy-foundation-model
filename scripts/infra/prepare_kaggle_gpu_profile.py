@@ -84,7 +84,7 @@ def verify_result(path: Path, sha: str) -> dict:
         if any(repeat.get(key) != value for key, value in {
             "status": "PASS", "repeat": index, "warmup_steps": 5,
             "measured_steps": 30, "target_tokens": 1920,
-            "last_update_changed_parameter": True}.items()):
+            "measured_run_changed_parameter": True}.items()):
             raise ValueError("incomplete repeat")
         for key in ("elapsed_seconds", "mean_step_seconds", "target_tokens_per_second",
                     "allocated_baseline_bytes", "reserved_baseline_bytes",
@@ -121,6 +121,17 @@ def verify_result(path: Path, sha: str) -> dict:
                               ("loss_max", max(step["loss"] for step in repeat["steps"]))):
             if repeat.get(key) != expected:
                 raise ValueError(f"invalid {key}")
+    rates = sorted(repeat["target_tokens_per_second"] for repeat in repeats)
+    median = rates[1]
+    spread = (rates[2] - rates[0]) / median
+    reported_median = result.get("median_target_tokens_per_second")
+    reported_spread = result.get("throughput_spread")
+    if (any(isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) for value in (reported_median, reported_spread))
+            or not math.isclose(reported_median, median, rel_tol=1e-9)
+            or not math.isclose(reported_spread, spread, rel_tol=1e-9)
+            or result.get("unstable") is not (spread > 0.10)):
+        raise ValueError("repeat aggregation mismatch")
     return result
 
 

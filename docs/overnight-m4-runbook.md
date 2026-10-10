@@ -77,3 +77,66 @@ If stopped, do not rerun the controller without inspecting its Kaggle submission
 5. If dependencies, Kaggle quota, credentials, test checks or sandbox block work, report the failure rather than removing safeguards.
 
 Experiments are bounded and synthetic until a separately reviewed real-text pretraining/scaling study is authorized.
+
+
+## GPU-only recovery after Kaggle \`kernels.get\` access-denied (2026-10-10)
+
+The initial B1 run reached \`gpu=BLOCKED\` because the nonexistent
+\`wendyzhan040513/wendyfm-fp32-pretrain\` slug returned
+\`Permission 'kernels.get' was denied\` rather than a 404. The same
+authenticated Kaggle account could list its own notebooks, and the
+target slug was absent from a complete short \`--mine\` list.
+
+The revised \`kernel_status()\` treats this very specific denial as
+*possibly absent* and verifies the owned kernel listing before any
+submission. If listing fails, is empty, contains the target, or appears
+truncated, the recovery remains blocked. Do not treat arbitrary 401/403
+messages as permission to submit.
+
+**Do not restart the running 14.5h controller**: it has already finished
+the two Codex tasks and owns \`m4.lock\`. The new \`--gpu-only\` option uses
+its own local lock/status folder, makes **zero Codex calls**, performs
+**at most one** private Kaggle submission with a 300-second timeout,
+verifies the small result, and publishes a separate draft evidence PR.
+
+B1 Mac terminal after confirming available *free* Kaggle GPU quota:
+
+~~~sh
+(
+set -e
+cd ~/workspaces/projects/wendyfm-m4-gpu
+git fetch origin ops/m4-overnight-20261009
+mkdir -p ~/wendyfm-overnight
+git show origin/ops/m4-overnight-20261009:scripts/infra/overnight_m4.py \
+  > ~/wendyfm-overnight/overnight_m4.py
+/usr/bin/python3 -m py_compile ~/wendyfm-overnight/overnight_m4.py
+PIDFILE="$HOME/wendyfm-overnight/m4-gpu-only.pid"
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  echo "BLOCKED: GPU-only recovery is already running"
+  exit 1
+fi
+nohup /usr/bin/python3 ~/wendyfm-overnight/overnight_m4.py \
+  --gpu-only --repo ~/workspaces/projects/wendyfm-m4-gpu \
+  > ~/wendyfm-overnight/m4-gpu-only-launch.log 2>&1 < /dev/null &
+echo $! > "$PIDFILE"
+nohup caffeinate -i -s -w "$(cat "$PIDFILE")" \
+  > ~/wendyfm-overnight/m4-gpu-only-caffeinate.log 2>&1 < /dev/null &
+sleep 10
+DIR="$(cat ~/wendyfm-overnight/latest-m4-gpu-only.txt)"
+cat "$DIR/status.json"
+tail -20 "$DIR/runner.log"
+)
+~~~
+
+A successful first status reads \`preflight=PASS\`,
+\`controller=GPU_ONLY_RUNNING\`, \`gpu=SUBMITTED/WAITING\` (possibly
+\`PREFLIGHT\` or \`SUBMITTING_ONCE\` at the instant checked).
+A later \`gpu=PASS\` plus \`controller=GPU_ONLY_DONE\` and an actual
+remote evidence draft PR constitute success. A \`gpu=BLOCKED\` means
+inspect the log and Kaggle site; **do not re-run blindly**. The old
+controller's \`gpu=BLOCKED\` state will correctly remain unchanged:
+the recovery writes to its own folder.
+
+This path is an operator-initiated fix, not a hot patch of the old
+Python process and not an automatic retry. It does not touch A1/A2,
+or change the already completed M5 draft PRs.

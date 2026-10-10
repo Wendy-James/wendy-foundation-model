@@ -5,6 +5,7 @@ on:
       - 'scripts/infra/overnight_m4.py'
       - 'docs/overnight-m4-runbook.md'
       - '.github/workflows/overnight-runner-ci.yml'
+      - 'tests/infra/test_overnight_m4.py'
   workflow_dispatch:
 
 jobs:
@@ -21,6 +22,8 @@ jobs:
           python -m py_compile scripts/infra/overnight_m4.py
           python scripts/infra/overnight_m4.py --help | grep -- '--codex-calls'
           python scripts/infra/overnight_m4.py --help | grep -- '--hours'
+      - name: Test Kaggle missing-slug and access-denied handling offline
+        run: python -m unittest discover -s tests/infra -p 'test_overnight_m4.py' -v
       - name: Verify exactly one GPU submission branch, no merge or paid runners
         run: |
           python - <<'PY'

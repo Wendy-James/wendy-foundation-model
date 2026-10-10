@@ -41,9 +41,16 @@ the measured run must change a parameter. The result includes all
 30 per-step loss and gradient-norm observations per repeat. The reported
 throughput median and `(max - min) / median` spread retain all three repeats;
 spread above 10% marks the baseline unstable.
-The runner rejects a non-T4 device or any model parameter that is not FP32 on
-`cuda:0`. Local result verification requires the pinned fixture hash, one CUDA
-device, software and GPU identity, and consistent elapsed-time arithmetic.
+Kaggle's T4 accelerator allocates two physical T4 cards. The private wrapper
+sets `CUDA_DEVICE_ORDER=PCI_BUS_ID` and `CUDA_VISIBLE_DEVICES=0` in the profiler
+child environment before Python imports PyTorch. This uses one logical T4 from
+that T4×2 allocation; it is not a two-GPU run or a separate T4×1 SKU. The
+runner still requires exactly one visible CUDA device and FP32 parameters on
+`cuda:0`. It queries physical GPU index 0 with `nvidia-smi -i 0`, checks its
+name against PyTorch's selected device, and verifies index 0 is first in PCI
+order. It fails if the mapping differs. Local result verification requires the
+pinned fixture hash, one visible CUDA device, software and GPU identity, and
+consistent elapsed-time arithmetic.
 
 ## Run later, after Phase B approval
 
@@ -55,11 +62,13 @@ python scripts/infra/prepare_kaggle_gpu_profile.py prepare \
   --job-dir /tmp/wendyfm-m5-job --user KAGGLE_USERNAME --sha FULL_COMMIT_SHA
 ```
 
-Before starting a job, check free T4 quota, private metadata, one visible GPU,
-and the pinned SHA. The package contains only the wrapper and metadata; it
-clones the public pinned commit, uses the committed local fixture, and has no
-dataset attachments or credentials. Submit **one** free private Kaggle job,
-with zero retries and no paid compute. The wrapper enforces a
+Before starting a job, check free T4 quota, private metadata with
+`machine_shape=NvidiaTeslaT4`, and the pinned SHA. The package contains only
+the wrapper and metadata; it clones the public pinned commit, uses the committed
+local fixture, and has no dataset attachments or credentials. When Phase B is
+authorized, use the Kaggle CLI's documented `--accelerator NvidiaTeslaT4`
+and `--timeout 300` options for **one** free private job, with zero retries
+and no paid compute. The wrapper enforces a
 300-second total deadline across clone, checkout, and profiling; set
 a 300-second external job watchdog as well, covering Kaggle startup time.
 Stop on a SHA, device-count, metadata, alignment,

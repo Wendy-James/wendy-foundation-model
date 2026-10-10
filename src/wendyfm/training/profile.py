@@ -76,22 +76,32 @@ def _source_sha(expected_sha: str) -> str:
     return actual
 
 
-def _gpu_platform() -> dict:
+def _gpu_platform(device_name: str) -> dict:
     completed = subprocess.run(
-        ["nvidia-smi", "--query-gpu=driver_version,power.limit",
+        ["nvidia-smi", "-i", "0", "--query-gpu=name,driver_version,power.limit,pci.bus_id",
          "--format=csv,noheader,nounits"],
         check=True, capture_output=True, text=True, timeout=10,
     )
     rows = completed.stdout.strip().splitlines()
     if len(rows) != 1:
-        raise ValueError("expected exactly one nvidia-smi GPU row")
+        raise ValueError("expected one selected nvidia-smi GPU row")
     fields = [field.strip() for field in rows[0].split(",")]
-    if len(fields) != 2 or not fields[0] or not fields[1]:
-        raise ValueError("incomplete GPU driver or power metadata")
-    power_limit = float(fields[1])
+    if len(fields) != 4 or fields[0] != device_name or not all(fields):
+        raise ValueError("selected physical GPU does not match logical cuda:0")
+    ordering = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,pci.bus_id", "--format=csv,noheader,nounits"],
+        check=True, capture_output=True, text=True, timeout=10,
+    )
+    devices = [[part.strip() for part in line.split(",")]
+               for line in ordering.stdout.strip().splitlines()]
+    if (not devices or any(len(row) != 2 for row in devices)
+            or [row[1] for row in devices if row[0] == "0"] != [fields[3]]
+            or fields[3] != min(row[1] for row in devices)):
+        raise ValueError("selected physical GPU does not match PCI CUDA ordering")
+    power_limit = float(fields[2])
     if not math.isfinite(power_limit) or power_limit <= 0:
         raise ValueError("invalid GPU power limit")
-    return {"driver_version": fields[0], "gpu_power_limit_watts": power_limit}
+    return {"driver_version": fields[1], "gpu_power_limit_watts": power_limit}
 
 
 def _memory_on_failure() -> dict:
@@ -234,7 +244,7 @@ def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
                        "torch_version": str(torch.__version__), "cuda_version": torch.version.cuda,
                        "parameter_count": sum(p.numel() for p in DecoderOnlyTransformer(
                            ModelConfig(**settings["model"])).parameters())})
-        result.update(_gpu_platform())
+        result.update(_gpu_platform(device.name))
         documents = _documents(train_path)
         tokenizer = BPETokenizer.train(documents, vocab_size=settings["model"]["vocab_size"],
                                        special_tokens=(settings["end_of_document"],))

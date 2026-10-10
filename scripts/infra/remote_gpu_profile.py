@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -50,11 +51,15 @@ def main() -> None:
             verify_checkout(repo, timeout=remaining_seconds(started, 10))
             record["tested_commit_sha"] = EXPECTED_COMMIT_SHA
             output = Path(directory) / "result.json"
+            # Set visibility before the child interpreter imports torch. PCI ordering
+            # makes logical cuda:0 correspond to the selected physical T4 at index 0.
+            profile_env = os.environ.copy()
+            profile_env.update(CUDA_DEVICE_ORDER="PCI_BUS_ID", CUDA_VISIBLE_DEVICES="0")
             try:
                 subprocess.run([sys.executable, str(repo / "scripts/profile_gpu.py"),
                                 "--expected-sha", EXPECTED_COMMIT_SHA,
                                 "--output", str(output)], cwd=repo, check=True,
-                               capture_output=True, text=True,
+                               capture_output=True, text=True, env=profile_env,
                                timeout=remaining_seconds(started, TOTAL_TIMEOUT_SECONDS))
             finally:
                 if output.exists():

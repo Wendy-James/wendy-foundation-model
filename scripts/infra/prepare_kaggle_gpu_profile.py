@@ -38,6 +38,7 @@ def prepare_job(job_dir: Path, user: str, sha: str) -> None:
     metadata = {"id": f"{user}/{SLUG}", "title": SLUG, "code_file": REMOTE.name,
                 "language": "python", "kernel_type": "script", "is_private": True,
                 "enable_gpu": True, "enable_tpu": False, "enable_internet": True,
+                "machine_shape": "NvidiaTeslaT4",
                 "dataset_sources": [], "competition_sources": [], "kernel_sources": [],
                 "model_sources": []}
     (job_dir / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n",

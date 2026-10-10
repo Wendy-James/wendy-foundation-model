@@ -12,6 +12,7 @@ from wendyfm.training.data import NextTokenBatchSampler
 from wendyfm.training.loop import TrainConfig
 from wendyfm.training.profile import (
     _check_fp32_model,
+    _gpu_platform,
     _preflight,
     _repeat,
     _source_sha,
@@ -75,6 +76,42 @@ def test_profile_rejects_cpu_model_and_non_t4_device(monkeypatch, tmp_path) -> N
     assert result["error_type"] == "RuntimeError"
     assert result["failure_phase"] == "setup"
     assert result["repeats"] == []
+
+
+def test_profile_rejects_two_visible_cuda_devices(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("wendyfm.training.profile._source_sha", lambda _: "a" * 40)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    result = run(CONFIG, tmp_path / "two-visible.json", expected_sha="a" * 40)
+    assert result["status"] == "FAIL"
+    assert result["error_type"] == "RuntimeError"
+    assert "cuda_device_count" not in result
+
+
+def test_gpu_platform_selects_physical_zero_and_checks_pci_order(monkeypatch) -> None:
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if "-i" in command:
+            return SimpleNamespace(stdout="Tesla T4, 550.0, 70.0, 00000000:00:04.0\n")
+        return SimpleNamespace(stdout="0, 00000000:00:04.0\n1, 00000000:00:05.0\n")
+
+    monkeypatch.setattr("wendyfm.training.profile.subprocess.run", fake_run)
+    assert _gpu_platform("Tesla T4") == {"driver_version": "550.0",
+                                          "gpu_power_limit_watts": 70.0}
+    assert commands[0][:3] == ["nvidia-smi", "-i", "0"]
+    with pytest.raises(ValueError, match="logical cuda:0"):
+        _gpu_platform("NVIDIA L4")
+
+    def wrong_order(command, **_kwargs):
+        if "-i" in command:
+            return SimpleNamespace(stdout="Tesla T4, 550.0, 70.0, 00000000:00:05.0\n")
+        return SimpleNamespace(stdout="0, 00000000:00:05.0\n1, 00000000:00:04.0\n")
+
+    monkeypatch.setattr("wendyfm.training.profile.subprocess.run", wrong_order)
+    with pytest.raises(ValueError, match="PCI CUDA ordering"):
+        _gpu_platform("Tesla T4")
 
 
 def test_oom_returns_bounded_failure_record_without_cuda(monkeypatch) -> None:

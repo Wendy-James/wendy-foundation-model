@@ -3,8 +3,10 @@
 import copy
 import json
 import runpy
+import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +23,7 @@ def test_private_single_gpu_package(tmp_path) -> None:
     assert metadata["is_private"] is True
     assert metadata["enable_gpu"] is True
     assert metadata["enable_tpu"] is False
+    assert metadata["machine_shape"] == "NvidiaTeslaT4"
     assert metadata["dataset_sources"] == []
     assert metadata["code_file"] == "remote_gpu_profile.py"
     assert f'EXPECTED_COMMIT_SHA = "{sha}"' in script
@@ -40,6 +43,32 @@ def test_remote_wrapper_deadline_is_total_and_bounded() -> None:
     assert 0 < remaining(time.monotonic() - 1, 60) <= 60
     with pytest.raises(TimeoutError, match="runtime budget"):
         remaining(time.monotonic() - 301, 10)
+
+
+def test_remote_masks_profiler_child_before_start(monkeypatch, tmp_path) -> None:
+    remote = runpy.run_path(str(LOCAL["REMOTE"]))
+    globals_ = remote["main"].__globals__
+    globals_["EXPECTED_COMMIT_SHA"] = "a" * 40
+    globals_["RESULT_PATH"] = tmp_path / "result.json"
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        if "profile_gpu.py" in str(command):
+            calls.append(kwargs["env"])
+            raise subprocess.CalledProcessError(1, command)
+        if "rev-parse" in command:
+            return SimpleNamespace(stdout="a" * 40 + "\n")
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(remote["subprocess"], "run", fake_run)
+    with pytest.raises(SystemExit) as error:
+        remote["main"]()
+    assert error.value.code == 1
+    assert len(calls) == 1
+    assert calls[0]["CUDA_VISIBLE_DEVICES"] == "0"
+    assert calls[0]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+    assert json.loads(globals_["RESULT_PATH"].read_text())["status"] == "FAIL"
 
 
 def test_result_rejects_incomplete_or_mismatched_repeats(tmp_path) -> None:

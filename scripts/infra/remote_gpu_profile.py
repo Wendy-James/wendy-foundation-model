@@ -1,0 +1,84 @@
+"""Private Kaggle wrapper for one SHA-pinned, bounded M5 Phase A baseline."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+EXPECTED_COMMIT_SHA = "__WENDYFM_COMMIT_SHA__"
+PUBLIC_REPO_URL = "https://github.com/Wendy-James/wendy-foundation-model.git"
+RESULT_PATH = Path("/kaggle/working/m5-profile-result.json")
+TOTAL_TIMEOUT_SECONDS = 300
+
+
+def remaining_seconds(started: float, stage_limit: int) -> float:
+    remaining = TOTAL_TIMEOUT_SECONDS - (time.monotonic() - started)
+    if remaining <= 0:
+        raise TimeoutError("M5 profile wrapper exceeded its runtime budget")
+    return min(remaining, stage_limit)
+
+
+def verify_checkout(repo: Path, *, timeout: float = 10) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", EXPECTED_COMMIT_SHA):
+        raise ValueError("invalid commit pin")
+    actual = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True, timeout=timeout,
+    ).stdout.strip()
+    if actual != EXPECTED_COMMIT_SHA:
+        raise ValueError("checkout SHA mismatch")
+
+
+def main() -> None:
+    started = time.monotonic()
+    record: dict = {"status": "FAIL", "expected_commit_sha": EXPECTED_COMMIT_SHA,
+                    "tested_commit_sha": None, "test": "m5_phase_a_fp32"}
+    try:
+        with tempfile.TemporaryDirectory(prefix="wendyfm-m5-") as directory:
+            repo = Path(directory) / "wendyfm"
+            subprocess.run(["git", "-c", "credential.helper=", "clone", "--quiet",
+                            PUBLIC_REPO_URL, str(repo)], check=True, capture_output=True,
+                           text=True, timeout=remaining_seconds(started, 60))
+            subprocess.run(["git", "-C", str(repo), "checkout", "--quiet", "--detach",
+                            EXPECTED_COMMIT_SHA], check=True, capture_output=True,
+                           text=True, timeout=remaining_seconds(started, 30))
+            verify_checkout(repo, timeout=remaining_seconds(started, 10))
+            record["tested_commit_sha"] = EXPECTED_COMMIT_SHA
+            output = Path(directory) / "result.json"
+            # Set visibility before the child interpreter imports torch. PCI ordering
+            # makes logical cuda:0 correspond to the selected physical T4 at index 0.
+            profile_env = os.environ.copy()
+            profile_env.update(CUDA_DEVICE_ORDER="PCI_BUS_ID", CUDA_VISIBLE_DEVICES="0")
+            try:
+                subprocess.run([sys.executable, str(repo / "scripts/profile_gpu.py"),
+                                "--expected-sha", EXPECTED_COMMIT_SHA,
+                                "--output", str(output)], cwd=repo, check=True,
+                               capture_output=True, text=True, env=profile_env,
+                               timeout=remaining_seconds(started, TOTAL_TIMEOUT_SECONDS))
+            finally:
+                if output.exists():
+                    record["manifest"] = json.loads(output.read_text(encoding="utf-8"))
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            if (manifest.get("status") != "PASS"
+                    or manifest.get("source_commit_sha") != EXPECTED_COMMIT_SHA):
+                raise ValueError("profile result SHA or status mismatch")
+            record["manifest"] = manifest
+            record["status"] = "PASS"
+    except Exception as error:
+        # Exception strings can contain remote data or credentials.
+        record["error_type"] = type(error).__name__
+    RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RESULT_PATH.write_text(json.dumps(record, sort_keys=True, allow_nan=False) + "\n",
+                           encoding="utf-8")
+    if record["status"] != "PASS":
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

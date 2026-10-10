@@ -180,12 +180,35 @@ def github_gpu_evidence(payload):
                   "exp(m4): record real bounded Kaggle FP32 GPU evidence")
 
 def kernel_status():
+    """Return current status, or None only if an owned slug is verifiably absent.
+
+    Kaggle sometimes reports "Permission 'kernels.get' was denied" for a
+    not-yet-created kernel. That message is NOT by itself proof of absence:
+    confirm using a successful, non-truncated authenticated --mine listing.
+    """
     p = subprocess.run(["kaggle", "kernels", "status", KERNEL],
                        capture_output=True, text=True, timeout=60)
-    s = p.stdout + p.stderr
+    s = (p.stdout or "") + (p.stderr or "")
     if p.returncode == 0:
         return s.strip()
-    if any(t in s.lower() for t in ("404", "not found", "does not exist", "no kernel")):
+    lower = s.lower()
+    if any(t in lower for t in ("404", "not found", "does not exist", "no kernel")):
+        return None
+    if "cannot access kernel" in lower and "permission 'kernels.get' was denied" in lower:
+        listing = subprocess.run(["kaggle", "kernels", "list", "--mine",
+                                  "--page-size", "100"],
+                                 capture_output=True, text=True, timeout=60)
+        if listing.returncode != 0:
+            raise RuntimeError("Kaggle list --mine failed; will not submit")
+        owner = KERNEL.split("/", 1)[0]
+        refs = re.findall(
+            r"(?m)^\s*(" + re.escape(owner) + r"/[A-Za-z0-9_-]+)\s+",
+            listing.stdout or "",
+        )
+        if not refs or len(refs) >= 100:
+            raise RuntimeError("owned kernel list empty/possibly truncated; will not submit")
+        if KERNEL in refs:
+            raise RuntimeError("kernel listed as owned but status inaccessible; will not submit")
         return None
     raise RuntimeError("remote kernel status uncertain: will not submit")
 

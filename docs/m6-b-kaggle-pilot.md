@@ -1,11 +1,12 @@
 # M6-B private T4 pilot package
 
 This stacked branch prepares one private Kaggle script job for Issue #16. It
-does not contain GPU evidence. The package carries byte-identical copies of
-the M6-A train, validation, and tokenizer artifacts under `data/`; the raw
+does not contain GPU evidence. The generated Python job embeds compressed,
+byte-identical M6-A train, validation, and tokenizer artifacts; the raw
 artifacts stay outside Git. The committed source manifest fixes their SHA256
-hashes and the pinned FineWeb-Edu revision. Package preparation and the remote
-wrapper both reject mismatches before training.
+hashes and the pinned FineWeb-Edu revision. At runtime the wrapper materializes
+all three files in its temporary workspace and verifies their hashes before
+CUDA or model initialization.
 
 The wrapper checks out one full commit SHA, compares its own code with that
 commit, masks T4x2 to one visible T4, then runs fresh A/B/C subprocesses in
@@ -17,8 +18,9 @@ The runner rejects nonfinite loss, validation loss, gradients, gradient norm,
 or parameters, a skipped GradScaler update, and reserved CUDA memory at 12
 GiB. Any subprocess failure or 900-second arm timeout stops later arms. There
 are zero retries and a 3600-second total timeout. OOM and other failures
-produce a single `FAIL` JSON with the failed arm; no partial result passes
-verification. The final `PASS` JSON contains all three per-arm records.
+produce a single `FAIL` JSON with the failed arm, concise failure stage, error
+type, and error message; no partial result passes verification. The final
+`PASS` JSON contains all three per-arm records.
 
 The measured fields include train and held-out validation loss, target
 tokens/sec, measured step time, peak CUDA allocated and reserved bytes, device,

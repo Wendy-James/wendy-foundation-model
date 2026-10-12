@@ -1,8 +1,10 @@
 """Offline checks for frozen packaging and strict three-arm acceptance."""
 
+import base64
 import hashlib
 import json
 import runpy
+import zlib
 from pathlib import Path
 
 import pytest
@@ -32,16 +34,86 @@ def test_private_package_requires_exact_frozen_bytes(tmp_path, monkeypatch) -> N
     assert metadata["machine_shape"] == "NvidiaTeslaT4"
     assert metadata["enable_gpu"] and not metadata["enable_tpu"]
     assert metadata["dataset_sources"] == []
-    assert LOCAL["verify_artifacts"](job / "data") == hashes
+    assert sorted(path.name for path in job.iterdir()) == [
+        "kernel-metadata.json", "remote_m6_pilot.py"]
     script = (job / "remote_m6_pilot.py").read_text()
     assert 'EXPECTED_COMMIT_SHA = "' + "a" * 40 + '"' in script
     assert "__WENDYFM_COMMIT_SHA__" not in script
+    assert "__WENDYFM_DATA_PAYLOAD__" not in script
+    assert 'Path(__file__).resolve().parent / "data"' not in script
     compile(script, "remote_m6_pilot.py", "exec")
+    remote = runpy.run_path(str(job / "remote_m6_pilot.py"))
+    materialized = tmp_path / "materialized"
+    remote["materialize_artifacts"](materialized, hashes, remote["PACKAGED_DATA"])
+    assert LOCAL["verify_artifacts"](materialized) == hashes
+    assert all((materialized / name).read_bytes() == (data / name).read_bytes()
+               for name in remote["PACKAGED_DATA"])
     with pytest.raises(ValueError, match="empty"):
         LOCAL["prepare_job"](job, data, "wendy_user", "a" * 40)
     (data / "train.jsonl").write_text("changed")
     with pytest.raises(ValueError, match="train.jsonl hash"):
         LOCAL["prepare_job"](tmp_path / "bad", data, "wendy_user", "a" * 40)
+
+
+def test_packaged_artifacts_are_deterministic_and_reject_tampering(tmp_path, monkeypatch) -> None:
+    data = tmp_path / "source"
+    data.mkdir()
+    hashes = {}
+    for name, key in (("train.jsonl", "train_artifact_sha256"),
+                      ("validation.jsonl", "validation_artifact_sha256"),
+                      ("tokenizer.json", "tokenizer_sha256")):
+        raw = (name + "\n").encode()
+        (data / name).write_bytes(raw)
+        hashes[key] = hashlib.sha256(raw).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(hashes))
+    monkeypatch.setitem(LOCAL["prepare_job"].__globals__, "MANIFEST", manifest)
+    jobs = [tmp_path / "job1", tmp_path / "job2"]
+    for job in jobs:
+        LOCAL["prepare_job"](job, data, "wendy_user", "a" * 40)
+    assert (jobs[0] / "remote_m6_pilot.py").read_bytes() == (
+        jobs[1] / "remote_m6_pilot.py").read_bytes()
+    remote = runpy.run_path(str(jobs[0] / "remote_m6_pilot.py"))
+    materialize = remote["materialize_artifacts"]
+    payload = remote["PACKAGED_DATA"]
+    missing = {key: value for key, value in payload.items() if key != "train.jsonl"}
+    with pytest.raises(ValueError, match="missing or unexpected"):
+        materialize(tmp_path / "missing", hashes, missing)
+    corrupt = {**payload, "train.jsonl": "not base64!"}
+    with pytest.raises(ValueError, match="payload corrupt"):
+        materialize(tmp_path / "corrupt", hashes, corrupt)
+    truncated = {**payload, "train.jsonl": base64.b64encode(
+        base64.b64decode(payload["train.jsonl"])[:-1]).decode("ascii")}
+    with pytest.raises(ValueError, match="payload corrupt"):
+        materialize(tmp_path / "truncated", hashes, truncated)
+    tampered = {**payload, "train.jsonl": base64.b64encode(
+        zlib.compress(b"modified\n", level=9)).decode("ascii")}
+    with pytest.raises(ValueError, match="provenance mismatch"):
+        materialize(tmp_path / "tampered", hashes, tampered)
+
+
+def test_failure_record_has_message_and_pre_arm_stage(tmp_path, monkeypatch) -> None:
+    source = (ROOT / "scripts/infra/remote_m6_pilot.py").read_text()
+    script = tmp_path / "remote_m6_pilot.py"
+    script.write_text(source.replace("__WENDYFM_COMMIT_SHA__", "a" * 40).replace(
+        "__WENDYFM_DATA_PAYLOAD__", "{}"))
+    remote = runpy.run_path(str(script))
+    globals_ = remote["main"].__globals__
+    output = tmp_path / "result.json"
+    monkeypatch.setitem(globals_, "RESULT_PATH", output)
+
+    def fail_clone(*args, **kwargs):
+        raise FileNotFoundError("source clone unavailable")
+
+    monkeypatch.setattr(globals_["subprocess"], "run", fail_clone)
+    with pytest.raises(SystemExit, match="1"):
+        remote["main"]()
+    result = json.loads(output.read_text())
+    assert result["status"] == "FAIL"
+    assert result["failed_arm"] is None
+    assert result["failure_stage"] == "clone_source"
+    assert result["error_type"] == "FileNotFoundError"
+    assert result["error_message"] == "source clone unavailable"
 
 
 def test_verifier_rejects_partial_and_wrong_mode(tmp_path) -> None:

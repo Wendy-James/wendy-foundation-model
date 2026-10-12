@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
 import re
-import shutil
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,11 @@ REMOTE = Path(__file__).with_name("remote_m6_pilot.py")
 MANIFEST = ROOT / "data/manifests/fineweb_edu_m6.json"
 CONFIG = ROOT / "configs/m6_real_pilot.json"
 MARKER = "__WENDYFM_COMMIT_SHA__"
+DATA_MARKER = "__WENDYFM_DATA_PAYLOAD__"
+ARTIFACT_HASH_KEYS = (("train.jsonl", "train_artifact_sha256"),
+                      ("validation.jsonl", "validation_artifact_sha256"),
+                      ("tokenizer.json", "tokenizer_sha256"))
+MAX_ARTIFACT_BYTES = 1_000_000
 SLUG = "wendyfm-m6-b-realdata-pilot"
 ARMS = (("A", "reference", "fp32"), ("B", "sdpa", "fp32"),
         ("C", "sdpa", "fp16"))
@@ -32,12 +38,22 @@ def valid_sha(value: str) -> None:
 
 def verify_artifacts(data_dir: Path) -> dict:
     source = json.loads(MANIFEST.read_text())
-    for name, key in (("train.jsonl", "train_artifact_sha256"),
-                      ("validation.jsonl", "validation_artifact_sha256"),
-                      ("tokenizer.json", "tokenizer_sha256")):
+    for name, key in ARTIFACT_HASH_KEYS:
         if digest(data_dir / name) != source[key]:
             raise ValueError(f"{name} hash differs from frozen manifest")
     return source
+
+
+def encoded_artifacts(data_dir: Path, source: dict) -> dict[str, str]:
+    payload = {}
+    for name, key in ARTIFACT_HASH_KEYS:
+        raw = (data_dir / name).read_bytes()
+        if len(raw) > MAX_ARTIFACT_BYTES:
+            raise ValueError(f"{name} exceeds package size limit")
+        if hashlib.sha256(raw).hexdigest() != source[key]:
+            raise ValueError(f"{name} hash differs from frozen manifest")
+        payload[name] = base64.b64encode(zlib.compress(raw, level=9)).decode("ascii")
+    return payload
 
 
 def prepare_job(job_dir: Path, data_dir: Path, user: str, sha: str) -> None:
@@ -48,16 +64,14 @@ def prepare_job(job_dir: Path, data_dir: Path, user: str, sha: str) -> None:
         raise ValueError("job directory must be outside repository")
     if job_dir.exists() and any(job_dir.iterdir()):
         raise ValueError("job directory must be empty")
-    verify_artifacts(data_dir)
+    source_manifest = verify_artifacts(data_dir)
     source = REMOTE.read_text()
-    if source.count(MARKER) != 1:
-        raise ValueError("remote script must contain one SHA marker")
+    if source.count(MARKER) != 1 or source.count(DATA_MARKER) != 1:
+        raise ValueError("remote script must contain one of each package marker")
+    payload = encoded_artifacts(data_dir, source_manifest)
     job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / REMOTE.name).write_text(source.replace(MARKER, sha))
-    (job_dir / "data").mkdir()
-    for name in ("train.jsonl", "validation.jsonl", "tokenizer.json"):
-        shutil.copyfile(data_dir / name, job_dir / "data" / name)
-    verify_artifacts(job_dir / "data")
+    (job_dir / REMOTE.name).write_text(source.replace(MARKER, sha).replace(
+        DATA_MARKER, repr(payload)))
     metadata = {"id": f"{user}/{SLUG}", "title": SLUG,
                 "code_file": REMOTE.name, "language": "python", "kernel_type": "script",
                 "is_private": True, "enable_gpu": True, "enable_tpu": False,

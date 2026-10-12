@@ -1,0 +1,23 @@
+{
+  "cpu_threads": 2,
+  "gradient_accumulation_steps": 4,
+  "metric_warmup_steps": 2,
+  "microbatch_size": 2,
+  "model": {
+    "attention_backend": "reference",
+    "d_model": 512,
+    "intermediate_size": 1536,
+    "max_seq_len": 256,
+    "n_heads": 8,
+    "n_layers": 6,
+    "vocab_size": 1024
+  },
+  "seed": 20261012,
+  "train": {
+    "learning_rate": 0.0003,
+    "max_steps": 20,
+    "min_learning_rate": 0.00003,
+    "warmup_steps": 2,
+    "weight_decay": 0.01
+  }
+}

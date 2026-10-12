@@ -22,6 +22,7 @@ from .loop import TrainConfig, learning_rate_for_step
 
 FORMAT_VERSION = 3
 CUDA_FORMAT_VERSION = 4
+AMP_FORMAT_VERSION = 5
 _LEGACY_KEYS = {
     "format_version", "model", "optimizer", "step", "torch_rng_state", "python_rng_state"
 }
@@ -58,6 +59,7 @@ def save_checkpoint(
     sampler: NextTokenBatchSampler | None = None,
     config: TrainConfig | None = None,
     batch_size: int | None = None,
+    scaler: torch.amp.GradScaler | None = None,
 ) -> None:
     """Atomically write v1, fingerprinted CPU v3, or CUDA v4."""
     if isinstance(step, bool) or not isinstance(step, int) or step < 0:
@@ -79,11 +81,14 @@ def save_checkpoint(
     device = devices.pop()
     if device.type == "cuda" and metadata is None:
         raise ValueError("CUDA checkpoints require sampler, config, and batch_size")
+    if scaler is not None and device.type != "cuda":
+        raise ValueError("GradScaler checkpoints require CUDA")
     if device.type not in ("cpu", "cuda"):
         raise ValueError("unsupported checkpoint device")
     destination = Path(path)
     payload = {
         "format_version": (
+            AMP_FORMAT_VERSION if scaler is not None else
             CUDA_FORMAT_VERSION if device.type == "cuda" else FORMAT_VERSION if metadata else 1
         ),
         "model": model.state_dict(),
@@ -99,6 +104,8 @@ def save_checkpoint(
     if device.type == "cuda":
         payload["cuda_device_index"] = device.index
         payload["cuda_rng_state"] = torch.cuda.get_rng_state(device)
+    if scaler is not None:
+        payload["scaler"] = scaler.state_dict()
     temporary: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -122,6 +129,7 @@ def load_checkpoint(
     sampler: NextTokenBatchSampler | None = None,
     config: TrainConfig | None = None,
     batch_size: int | None = None,
+    scaler: torch.amp.GradScaler | None = None,
 ) -> int:
     """Restore completed updates and RNG states; validate exact fingerprints."""
     try:
@@ -131,15 +139,21 @@ def load_checkpoint(
     if not isinstance(payload, dict):
         raise ValueError("invalid checkpoint contents")
     version = payload.get("format_version")
-    if type(version) is not int or version not in (1, 2, FORMAT_VERSION, CUDA_FORMAT_VERSION):
+    if type(version) is not int or version not in (
+        1, 2, FORMAT_VERSION, CUDA_FORMAT_VERSION, AMP_FORMAT_VERSION
+    ):
         raise ValueError("unsupported checkpoint format version")
     required = _LEGACY_KEYS | ({"sampler"} if version >= 2 else set())
     if version >= FORMAT_VERSION:
         required |= {"exact_metadata"}
-    if version == CUDA_FORMAT_VERSION:
+    if version >= CUDA_FORMAT_VERSION:
         required |= {"cuda_device_index", "cuda_rng_state"}
+    if version == AMP_FORMAT_VERSION:
+        required |= {"scaler"}
     if set(payload) != required:
         raise ValueError("invalid checkpoint contents")
+    if (version == AMP_FORMAT_VERSION) != (scaler is not None):
+        raise ValueError("checkpoint GradScaler state does not match restore request")
     if (version == 1 and sampler is not None) or (version >= 2 and sampler is None):
         raise ValueError("checkpoint sampler state does not match restore request")
     if sampler is not None and not isinstance(sampler, NextTokenBatchSampler):
@@ -167,7 +181,7 @@ def load_checkpoint(
     if len(model_devices) != 1:
         raise ValueError("model parameters must share one device")
     device = model_devices.pop()
-    if version == CUDA_FORMAT_VERSION:
+    if version >= CUDA_FORMAT_VERSION:
         if (
             device.type != "cuda"
             or type(payload["cuda_device_index"]) is not int
@@ -212,8 +226,10 @@ def load_checkpoint(
         optimizer.load_state_dict(payload["optimizer"])
         torch.set_rng_state(rng)
         random.setstate(payload["python_rng_state"])
-        if version == CUDA_FORMAT_VERSION:
+        if version >= CUDA_FORMAT_VERSION:
             torch.cuda.set_rng_state(cuda_rng, device=device)
+        if scaler is not None:
+            scaler.load_state_dict(payload["scaler"])
     except Exception as exc:
         raise ValueError(f"invalid checkpoint state: {exc}") from exc
     return step

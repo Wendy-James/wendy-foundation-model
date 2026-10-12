@@ -62,6 +62,9 @@ class TrainResult:
     peak_cuda_memory_bytes: int | None
     optimizer: torch.optim.AdamW
     peak_cuda_reserved_bytes: int | None = None
+    measured_steps: int = 0
+    timed_target_tokens: int = 0
+    timed_seconds: float = 0.0
 
 
 def learning_rate_for_step(step: int, config: TrainConfig) -> float:
@@ -88,6 +91,10 @@ def train(
     start_step: int = 0,
     end_step: int | None = None,
     step_observer: Callable[[int, float, float], None] | None = None,
+    grad_accum_steps: int = 1,
+    precision: str = "fp32",
+    scaler: torch.amp.GradScaler | None = None,
+    metric_warmup_steps: int = 0,
 ) -> TrainResult:
     """Train through end_step (default max_steps), using global schedule steps.
 
@@ -110,6 +117,12 @@ def train(
         or not start_step < end_step <= config.max_steps
     ):
         raise ValueError("end_step must be in (start_step, max_steps]")
+    if type(grad_accum_steps) is not int or grad_accum_steps < 1:
+        raise ValueError("grad_accum_steps must be positive")
+    if precision not in ("fp32", "fp16"):
+        raise ValueError("precision must be fp32 or fp16")
+    if type(metric_warmup_steps) is not int or not 0 <= metric_warmup_steps < end_step - start_step:
+        raise ValueError("metric_warmup_steps must leave at least one measured step")
     devices = {parameter.device for parameter in model.parameters()}
     if len(devices) != 1:
         raise ValueError("model parameters must share one device")
@@ -118,6 +131,10 @@ def train(
         raise ValueError("train requires a CPU or CUDA model")
     if device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable")
+    if precision == "fp16" and (device.type != "cuda" or scaler is None):
+        raise ValueError("fp16 requires CUDA and a GradScaler")
+    if precision == "fp32" and scaler is not None:
+        raise ValueError("fp32 must not use a GradScaler")
     if optimizer is None:
         if start_step:
             raise ValueError("resuming requires the restored optimizer")
@@ -129,34 +146,52 @@ def train(
     model.train()
     initial_loss = 0.0
     final_loss = 0.0
-    tokens = 0
+    measured_tokens = 0
+    measured_seconds = 0.0
     if device.type == "cuda":
         torch.cuda.synchronize(device)
         torch.cuda.reset_peak_memory_stats(device)
     started = time.perf_counter()
     for step in range(start_step + 1, end_step + 1):
-        input_ids, target_ids = batch_provider()
-        if (
-            not isinstance(input_ids, torch.Tensor)
-            or not isinstance(target_ids, torch.Tensor)
-            or input_ids.ndim != 2
-            or input_ids.shape != target_ids.shape
-            or not all(input_ids.shape)
-            or input_ids.dtype != torch.long
-            or target_ids.dtype != torch.long
-            or input_ids.device.type != "cpu"
-            or target_ids.device.type != "cpu"
-        ):
-            raise ValueError("batch provider must return matching nonempty CPU long [B, T] tensors")
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        step_started = time.perf_counter() if metric_warmup_steps else 0.0
         for group in optimizer.param_groups:
             group["lr"] = learning_rate_for_step(step, config)
-        input_ids = input_ids.to(device)
-        target_ids = target_ids.to(device)
         optimizer.zero_grad(set_to_none=True)
-        loss = model.next_token_loss(input_ids, target_ids)
-        if not bool(torch.isfinite(loss)):
-            raise FloatingPointError(f"nonfinite loss at step {step}")
-        loss.backward()
+        loss_sum = 0.0
+        step_tokens = 0
+        for _ in range(grad_accum_steps):
+            input_ids, target_ids = batch_provider()
+            if (
+                not isinstance(input_ids, torch.Tensor)
+                or not isinstance(target_ids, torch.Tensor)
+                or input_ids.ndim != 2
+                or input_ids.shape != target_ids.shape
+                or not all(input_ids.shape)
+                or input_ids.dtype != torch.long
+                or target_ids.dtype != torch.long
+                or input_ids.device.type != "cpu"
+                or target_ids.device.type != "cpu"
+            ):
+                raise ValueError(
+                    "batch provider must return matching nonempty CPU long [B, T] tensors"
+                )
+            input_ids = input_ids.to(device)
+            target_ids = target_ids.to(device)
+            with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                enabled=precision == "fp16"):
+                loss = model.next_token_loss(input_ids, target_ids)
+            if not bool(torch.isfinite(loss)):
+                raise FloatingPointError(f"nonfinite loss at step {step}")
+            if scaler is None:
+                (loss / grad_accum_steps).backward()
+            else:
+                scaler.scale(loss / grad_accum_steps).backward()
+            loss_sum += float(loss.detach())
+            step_tokens += target_ids.numel()
+        if scaler is not None:
+            scaler.unscale_(optimizer)
         for parameter in model.parameters():
             if parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all()):
                 optimizer.zero_grad(set_to_none=True)
@@ -165,25 +200,39 @@ def train(
         if not bool(torch.isfinite(grad_norm)):
             optimizer.zero_grad(set_to_none=True)
             raise FloatingPointError(f"nonfinite gradient norm at step {step}")
-        optimizer.step()
-        final_loss = float(loss.detach())
+        if scaler is None:
+            optimizer.step()
+        else:
+            old_scale = scaler.get_scale()
+            scaler.step(optimizer)
+            scaler.update()
+            if scaler.get_scale() < old_scale:
+                raise FloatingPointError(f"GradScaler skipped update at step {step}")
+        final_loss = loss_sum / grad_accum_steps
         if step_observer is not None:
             if any(not bool(torch.isfinite(parameter).all()) for parameter in model.parameters()):
                 raise FloatingPointError(f"nonfinite parameter at step {step}")
             step_observer(step, final_loss, float(grad_norm))
         if step == start_step + 1:
             initial_loss = final_loss
-        tokens += target_ids.numel()
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        if step - start_step > metric_warmup_steps:
+            if metric_warmup_steps:
+                measured_seconds += time.perf_counter() - step_started
+            measured_tokens += step_tokens
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - started
+    if not metric_warmup_steps:
+        measured_seconds = elapsed
     completed = end_step - start_step
     return TrainResult(
         step=end_step,
         initial_loss=initial_loss,
         final_loss=final_loss,
         mean_step_seconds=elapsed / completed,
-        tokens_per_second=tokens / elapsed,
+        tokens_per_second=measured_tokens / measured_seconds,
         peak_cuda_memory_bytes=(
             torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
         ),
@@ -191,4 +240,7 @@ def train(
         peak_cuda_reserved_bytes=(
             torch.cuda.max_memory_reserved(device) if device.type == "cuda" else None
         ),
+        measured_steps=completed - metric_warmup_steps,
+        timed_target_tokens=measured_tokens,
+        timed_seconds=measured_seconds,
     )

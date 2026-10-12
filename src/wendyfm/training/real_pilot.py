@@ -70,6 +70,25 @@ def _source_documents(data_dir: Path, manifest: dict) -> tuple[list[str], list[s
     return grouped["train"], grouped["validation"]
 
 
+def parameter_update_witness(before: torch.Tensor, after: torch.Tensor) -> dict:
+    """Compare the small final norm weight, without copying the whole model."""
+    before_values = before.detach().cpu().tolist()
+    after_values = after.detach().cpu().tolist()
+    if len(before_values) != len(after_values):
+        raise ValueError("parameter witness shape changed")
+    differences = [abs(a - b) for a, b in zip(before_values, after_values, strict=True)]
+    if not all(math.isfinite(value) for value in differences):
+        raise FloatingPointError("nonfinite parameter witness")
+    return {
+        "parameter_name": "final_norm.weight",
+        "elements_compared": len(differences),
+        "changed_elements": sum(value > 0 for value in differences),
+        "max_abs_delta": max(differences),
+        "before_sha256": sha256(json.dumps(before_values, separators=(",", ":")).encode()),
+        "after_sha256": sha256(json.dumps(after_values, separators=(",", ":")).encode()),
+    }
+
+
 def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_dir: Path, *,
         device_name: str = "cpu", precision: str = "fp32", end_step: int | None = None,
         resume: bool = False, attention_backend: str | None = None,
@@ -157,6 +176,7 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
     if type(end_step) is not int or not start_step < end_step <= train_config.max_steps:
         raise ValueError("end_step must advance within max_steps")
     metric_warmup = min(warmup, end_step - start_step - 1)
+    final_norm_before = model.final_norm.weight.detach().cpu().clone()
     initial_validation = validation_loss(model, validation_ids, model_config.max_seq_len,
                                          batch_size, precision)
     if device.type == "cuda" and max_cuda_reserved_bytes is not None and (
@@ -167,6 +187,10 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
                    grad_accum_steps=accum, precision=precision, scaler=scaler,
                    metric_warmup_steps=metric_warmup,
                    max_cuda_reserved_bytes=max_cuda_reserved_bytes)
+    update_witness = parameter_update_witness(final_norm_before, model.final_norm.weight)
+    parameters_updated = update_witness["changed_elements"] > 0
+    if not parameters_updated:
+        raise RuntimeError("optimizer did not update final_norm.weight")
     final_validation = validation_loss(model, validation_ids, model_config.max_seq_len,
                                        batch_size, precision)
     if device.type == "cuda" and max_cuda_reserved_bytes is not None and (
@@ -190,6 +214,8 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
         "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "cuda_device_count": torch.cuda.device_count() if device.type == "cuda" else 0,
         "trainable_parameters": parameter_count,
+        "parameters_updated": parameters_updated,
+        "parameter_update_witness": update_witness,
         "microbatch_size": batch_size,
         "gradient_accumulation_steps": accum,
         "effective_batch_size": batch_size * accum,

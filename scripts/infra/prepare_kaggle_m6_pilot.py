@@ -106,6 +106,19 @@ def verify_result(path: Path, sha: str) -> dict:
                 **expected_common, "arm": label, "attention_backend_requested": backend,
                 "precision": precision}.items()):
             raise ValueError(f"arm {label} provenance, mode, or budget mismatch")
+        witness = item.get("parameter_update_witness")
+        if item.get("parameters_updated") is not True or not isinstance(witness, dict):
+            raise ValueError(f"arm {label} lacks parameter-update evidence")
+        if (witness.get("parameter_name") != "final_norm.weight" or
+                type(witness.get("elements_compared")) is not int or
+                witness["elements_compared"] != 512 or
+                type(witness.get("changed_elements")) is not int or
+                not 0 < witness["changed_elements"] <= witness["elements_compared"] or
+                not re.fullmatch(r"[0-9a-f]{64}", str(witness.get("before_sha256"))) or
+                not re.fullmatch(r"[0-9a-f]{64}", str(witness.get("after_sha256"))) or
+                witness["before_sha256"] == witness["after_sha256"]):
+            raise ValueError(f"arm {label} has invalid parameter-update evidence")
+        positive(witness.get("max_abs_delta"), "parameter max_abs_delta")
         if any(not isinstance(item.get(key), str) or not item[key] for key in
                ("torch_version", "cuda_version", "gpu_name")) or "T4" not in item["gpu_name"]:
             raise ValueError(f"arm {label} lacks T4 or runtime identity")

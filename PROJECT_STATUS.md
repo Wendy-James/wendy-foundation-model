@@ -20,6 +20,10 @@ Build an interview-ready foundation-model training and systems project.
   `39bc1b9cc857115f788f6b604845178677fc2ad0`, with finite gradients
   and an actual parameter update. See [report](docs/kaggle-model-smoke.md)
   and [verified result](benchmarks/infra/gpu_model_smoke_20261009.json).
+- M5 Phase C1: three controlled FP32 model-size cells passed offline result
+  verification on pinned source SHA `33ab89b5eb36339fad4bcce76330c5208e2a100c`.
+  See the [experiment report](docs/m5-phase-c1-results.md) and
+  [exact result](benchmarks/infra/m5_c1_fp32_scaling_20261012.json).
 
 ## Infrastructure evidence
 
@@ -33,12 +37,10 @@ Build an interview-ready foundation-model training and systems project.
 
 ## Next
 
-1. Add and validate a GPU execution path; the current training loop explicitly
-   requires CPU tensors and a CPU model.
-2. Run a permitted small GPU pretraining experiment and record its actual
-   configuration, measurements, and validation results.
-3. Profile training, test a controlled systems optimization, then design
-   scaling experiments.
+1. Review the bounded M5 C1 comparison and decide whether to run separately
+   controlled context-length or batch-size sweeps.
+2. Plan real-data pretraining and systems optimization without treating the
+   tiny synthetic fixture as evidence of language quality or a scaling law.
 
 ## Research / engineering principles
 

@@ -112,3 +112,32 @@ def test_reference_attention_keeps_large_half_precision_scores_finite() -> None:
 def test_attention_rejects_invalid_input_shape(shape: tuple[int, ...]) -> None:
     with pytest.raises(ValueError):
         CausalSelfAttention(_config())(torch.randn(shape))
+
+
+@pytest.mark.parametrize("sequence", [1, 5, 12])
+def test_sdpa_matches_reference_forward_and_gradients(sequence: int) -> None:
+    torch.manual_seed(41)
+    reference = CausalSelfAttention(_config())
+    sdpa_config = ModelConfig(31, 8, 2, 1, 12, 16, attention_backend="sdpa")
+    optimized = CausalSelfAttention(sdpa_config)
+    optimized.load_state_dict(reference.state_dict())
+    x_ref = torch.randn(2, sequence, 8, requires_grad=True)
+    x_sdpa = x_ref.detach().clone().requires_grad_()
+    y_ref = reference(x_ref)
+    y_sdpa = optimized(x_sdpa)
+    torch.testing.assert_close(y_sdpa, y_ref, atol=1e-6, rtol=1e-5)
+    upstream = torch.randn_like(y_ref)
+    (y_ref * upstream).sum().backward()
+    (y_sdpa * upstream).sum().backward()
+    torch.testing.assert_close(x_sdpa.grad, x_ref.grad, atol=1e-6, rtol=1e-5)
+    for (name_ref, p_ref), (name_sdpa, p_sdpa) in zip(
+        reference.named_parameters(), optimized.named_parameters(), strict=True
+    ):
+        assert name_ref == name_sdpa
+        torch.testing.assert_close(p_sdpa.grad, p_ref.grad, atol=1e-6, rtol=1e-5)
+
+
+def test_attention_backend_is_explicit_and_validated() -> None:
+    assert _config().attention_backend == "reference"
+    with pytest.raises(ValueError, match="attention_backend"):
+        ModelConfig(31, 8, 2, 1, 12, 16, attention_backend="auto")

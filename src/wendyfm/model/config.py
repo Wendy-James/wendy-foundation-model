@@ -20,6 +20,7 @@ class ModelConfig:
     intermediate_size: int
     norm_eps: float = 1e-5
     rope_theta: float = 10000.0
+    attention_backend: str = "reference"
 
     def __post_init__(self) -> None:
         for name in (
@@ -37,6 +38,8 @@ class ModelConfig:
             raise ValueError("d_model must be divisible by n_heads")
         if self.head_dim % 2:
             raise ValueError("head_dim must be even for RoPE")
+        if self.attention_backend not in ("reference", "sdpa"):
+            raise ValueError("attention_backend must be reference or sdpa")
         if not math.isfinite(self.norm_eps) or self.norm_eps <= 0:
             raise ValueError("norm_eps must be finite and positive")
         if not math.isfinite(self.rope_theta) or self.rope_theta <= 0:

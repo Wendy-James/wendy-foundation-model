@@ -95,6 +95,7 @@ def train(
     precision: str = "fp32",
     scaler: torch.amp.GradScaler | None = None,
     metric_warmup_steps: int = 0,
+    max_cuda_reserved_bytes: int | None = None,
 ) -> TrainResult:
     """Train through end_step (default max_steps), using global schedule steps.
 
@@ -135,6 +136,15 @@ def train(
         raise ValueError("fp16 requires CUDA and a GradScaler")
     if precision == "fp32" and scaler is not None:
         raise ValueError("fp32 must not use a GradScaler")
+    if max_cuda_reserved_bytes is not None and (device.type != "cuda" or
+            type(max_cuda_reserved_bytes) is not int or max_cuda_reserved_bytes < 1):
+        raise ValueError("CUDA reserved-memory limit requires a positive CUDA byte count")
+    def check_memory() -> None:
+        if max_cuda_reserved_bytes is not None and (
+            torch.cuda.memory_reserved(device) >= max_cuda_reserved_bytes or
+            torch.cuda.max_memory_reserved(device) >= max_cuda_reserved_bytes
+        ):
+            raise MemoryError("CUDA reserved memory reached the pilot limit")
     if optimizer is None:
         if start_step:
             raise ValueError("resuming requires the restored optimizer")
@@ -188,6 +198,7 @@ def train(
                 (loss / grad_accum_steps).backward()
             else:
                 scaler.scale(loss / grad_accum_steps).backward()
+            check_memory()
             loss_sum += float(loss.detach())
             step_tokens += target_ids.numel()
         if scaler is not None:
@@ -208,10 +219,12 @@ def train(
             scaler.update()
             if scaler.get_scale() < old_scale:
                 raise FloatingPointError(f"GradScaler skipped update at step {step}")
+        check_memory()
         final_loss = loss_sum / grad_accum_steps
-        if step_observer is not None:
+        if step_observer is not None or max_cuda_reserved_bytes is not None:
             if any(not bool(torch.isfinite(parameter).all()) for parameter in model.parameters()):
                 raise FloatingPointError(f"nonfinite parameter at step {step}")
+        if step_observer is not None:
             step_observer(step, final_loss, float(grad_norm))
         if step == start_step + 1:
             initial_loss = final_loss

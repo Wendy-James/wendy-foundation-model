@@ -7,7 +7,7 @@ import torch
 
 from wendyfm.model import DecoderOnlyTransformer, ModelConfig
 from wendyfm.training.real_data import prepare_documents
-from wendyfm.training.real_pilot import run
+from wendyfm.training.real_pilot import parameter_update_witness, run
 
 
 def _fixture(tmp_path):
@@ -42,6 +42,8 @@ def test_real_pilot_metrics_provenance_and_exact_resume(tmp_path) -> None:
     assert full["tokens_per_second"] == pytest.approx(
         full["timed_target_tokens"] / (full["mean_step_seconds"] * full["measured_steps"]))
     assert full["validation_loss"] > 0
+    assert full["parameters_updated"] is True
+    assert full["parameter_update_witness"]["changed_elements"] > 0
     assert full["train_loss_last_batch"] == resumed["train_loss_last_batch"]
     assert full["validation_loss"] == resumed["validation_loss"]
     assert partial["optimizer_steps"] == resumed["start_step"] == 1
@@ -73,3 +75,17 @@ def test_representative_config_parameter_count_and_bounds() -> None:
     assert 10_000_000 <= count <= 30_000_000
     assert count == 21_502_464
     assert settings["microbatch_size"] * settings["gradient_accumulation_steps"] == 8
+
+
+def test_small_parameter_update_witness() -> None:
+    before = torch.ones(4)
+    unchanged = parameter_update_witness(before, before.clone())
+    assert unchanged["changed_elements"] == 0
+    assert unchanged["max_abs_delta"] == 0
+    assert unchanged["before_sha256"] == unchanged["after_sha256"]
+    after = before.clone()
+    after[2] -= 0.25
+    changed = parameter_update_witness(before, after)
+    assert changed["changed_elements"] == 1
+    assert changed["max_abs_delta"] == 0.25
+    assert changed["before_sha256"] != changed["after_sha256"]

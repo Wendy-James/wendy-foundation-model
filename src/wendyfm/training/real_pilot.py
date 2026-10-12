@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import subprocess
 import time
@@ -42,7 +43,10 @@ def validation_loss(
                             enabled=precision == "fp16"):
             loss = model.next_token_loss(batch[:, :-1], batch[:, 1:])
         total += float(loss) * len(batch)
-    return total / len(windows)
+    result = total / len(windows)
+    if not math.isfinite(result):
+        raise FloatingPointError("nonfinite validation loss")
+    return result
 
 
 def _source_documents(data_dir: Path, manifest: dict) -> tuple[list[str], list[str]]:
@@ -66,9 +70,29 @@ def _source_documents(data_dir: Path, manifest: dict) -> tuple[list[str], list[s
     return grouped["train"], grouped["validation"]
 
 
+def parameter_update_witness(before: torch.Tensor, after: torch.Tensor) -> dict:
+    """Compare the small final norm weight, without copying the whole model."""
+    before_values = before.detach().cpu().tolist()
+    after_values = after.detach().cpu().tolist()
+    if len(before_values) != len(after_values):
+        raise ValueError("parameter witness shape changed")
+    differences = [abs(a - b) for a, b in zip(before_values, after_values, strict=True)]
+    if not all(math.isfinite(value) for value in differences):
+        raise FloatingPointError("nonfinite parameter witness")
+    return {
+        "parameter_name": "final_norm.weight",
+        "elements_compared": len(differences),
+        "changed_elements": sum(value > 0 for value in differences),
+        "max_abs_delta": max(differences),
+        "before_sha256": sha256(json.dumps(before_values, separators=(",", ":")).encode()),
+        "after_sha256": sha256(json.dumps(after_values, separators=(",", ":")).encode()),
+    }
+
+
 def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_dir: Path, *,
         device_name: str = "cpu", precision: str = "fp32", end_step: int | None = None,
-        resume: bool = False) -> dict:
+        resume: bool = False, attention_backend: str | None = None,
+        max_cuda_reserved_bytes: int | None = None) -> dict:
     """Run a bounded segment; a real pilot requires prepared source artifacts."""
     started = time.perf_counter()
     if device_name not in ("cpu", "cuda"):
@@ -80,6 +104,10 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
     device = torch.device("cuda:0" if device_name == "cuda" else "cpu")
     config_bytes = config_path.read_bytes()
     settings = json.loads(config_bytes)
+    if attention_backend is not None:
+        if attention_backend not in ("reference", "sdpa"):
+            raise ValueError("unknown attention backend")
+        settings["model"]["attention_backend"] = attention_backend
     model_config = ModelConfig(**settings["model"])
     train_config = TrainConfig(**settings["train"])
     batch_size = settings["microbatch_size"]
@@ -137,6 +165,8 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
             raise ValueError("resume provenance differs")
         if previous["precision"] != precision or previous["device"] != str(device):
             raise ValueError("resume precision or device differs")
+        if previous["attention_backend_requested"] != model_config.attention_backend:
+            raise ValueError("resume attention backend differs")
         start_step = load_checkpoint(checkpoint_path, model, optimizer, sampler=sampler,
                                      config=train_config, batch_size=batch_size, scaler=scaler)
     elif checkpoint_path.exists() or result_path.exists():
@@ -146,14 +176,27 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
     if type(end_step) is not int or not start_step < end_step <= train_config.max_steps:
         raise ValueError("end_step must advance within max_steps")
     metric_warmup = min(warmup, end_step - start_step - 1)
+    final_norm_before = model.final_norm.weight.detach().cpu().clone()
     initial_validation = validation_loss(model, validation_ids, model_config.max_seq_len,
                                          batch_size, precision)
+    if device.type == "cuda" and max_cuda_reserved_bytes is not None and (
+            torch.cuda.memory_reserved(device) >= max_cuda_reserved_bytes):
+        raise MemoryError("CUDA reserved memory reached the pilot limit")
     result = train(model, lambda: sampler.sample(batch_size), train_config,
                    optimizer=optimizer, start_step=start_step, end_step=end_step,
                    grad_accum_steps=accum, precision=precision, scaler=scaler,
-                   metric_warmup_steps=metric_warmup)
+                   metric_warmup_steps=metric_warmup,
+                   max_cuda_reserved_bytes=max_cuda_reserved_bytes)
+    update_witness = parameter_update_witness(final_norm_before, model.final_norm.weight)
+    parameters_updated = update_witness["changed_elements"] > 0
+    if not parameters_updated:
+        raise RuntimeError("optimizer did not update final_norm.weight")
     final_validation = validation_loss(model, validation_ids, model_config.max_seq_len,
                                        batch_size, precision)
+    if device.type == "cuda" and max_cuda_reserved_bytes is not None and (
+            torch.cuda.memory_reserved(device) >= max_cuda_reserved_bytes or
+            torch.cuda.max_memory_reserved(device) >= max_cuda_reserved_bytes):
+        raise MemoryError("CUDA reserved memory reached the pilot limit")
     save_checkpoint(checkpoint_path, model, result.optimizer, result.step, sampler=sampler,
                     config=train_config, batch_size=batch_size, scaler=scaler)
     source_commit = subprocess.run(
@@ -166,7 +209,13 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
         "device": str(device), "precision": precision,
         "attention_backend_requested": model_config.attention_backend,
         "sdpa_kernel_observed": None,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "cuda_device_count": torch.cuda.device_count() if device.type == "cuda" else 0,
         "trainable_parameters": parameter_count,
+        "parameters_updated": parameters_updated,
+        "parameter_update_witness": update_witness,
         "microbatch_size": batch_size,
         "gradient_accumulation_steps": accum,
         "effective_batch_size": batch_size * accum,
@@ -174,6 +223,7 @@ def run(config_path: Path, data_dir: Path, source_manifest_path: Path, output_di
         "start_step": start_step, "optimizer_steps": result.step,
         "measured_steps": result.measured_steps,
         "timed_target_tokens": result.timed_target_tokens,
+        "timed_seconds": result.timed_seconds,
         "mean_step_seconds": result.timed_seconds / result.measured_steps,
         "tokens_per_second": result.tokens_per_second,
         "train_loss_first_batch": result.initial_loss,

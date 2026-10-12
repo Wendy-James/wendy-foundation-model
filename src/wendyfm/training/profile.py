@@ -212,9 +212,9 @@ def _repeat(index: int, ids: torch.Tensor, settings: dict) -> dict:
         torch.cuda.empty_cache()
 
 
-def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
-    """Run one bounded cell; always write a factual result, including failures."""
-    settings = load_config(config_path)
+def run_profile(config_path: Path, output_path: Path, *, expected_sha: str,
+                settings: dict) -> dict:
+    """Run one validated cell; always write a factual result, including failures."""
     sha = _source_sha(expected_sha)
     if output_path.exists():
         raise ValueError("output already exists")
@@ -243,7 +243,7 @@ def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
         result.update({"gpu_name": device.name, "gpu_total_memory_bytes": device.total_memory,
                        "torch_version": str(torch.__version__), "cuda_version": torch.version.cuda,
                        "parameter_count": sum(p.numel() for p in DecoderOnlyTransformer(
-                           ModelConfig(**settings["model"])).parameters())})
+                           ModelConfig(**settings["model"])).parameters() if p.requires_grad)})
         result.update(_gpu_platform(device.name))
         documents = _documents(train_path)
         tokenizer = BPETokenizer.train(documents, vocab_size=settings["model"]["vocab_size"],
@@ -275,3 +275,9 @@ def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
     output_path.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
                            encoding="utf-8")
     return result
+
+
+def run(config_path: Path, output_path: Path, *, expected_sha: str) -> dict:
+    """Run the unchanged Phase A configuration contract."""
+    return run_profile(config_path, output_path, expected_sha=expected_sha,
+                       settings=load_config(config_path))

@@ -52,15 +52,19 @@ def verify_result(path: Path, sha: str) -> dict:
         "status": "PASS", "expected_commit_sha": sha, "tested_commit_sha": sha,
         "test": "m5_phase_a_fp32"}.items()):
         raise ValueError("wrapper status or SHA mismatch")
-    result = wrapper.get("manifest")
-    settings = json.loads(CONFIG.read_text(encoding="utf-8"))
-    train_text = (CONFIG.parent / settings["train_text"]).resolve()
+    return verify_manifest(wrapper.get("manifest"), sha, CONFIG)
+
+
+def verify_manifest(result: dict, sha: str, config: Path) -> dict:
+    """Check one completed cell against its committed config and measurements."""
+    settings = json.loads(config.read_text(encoding="utf-8"))
+    train_text = (config.parent / settings["train_text"]).resolve()
     if not isinstance(result, dict) or any(result.get(key) != value for key, value in {
         "status": "PASS", "source_commit_sha": sha, "precision": "fp32", "device": "cuda:0",
         "cuda_device_count": 1,
         "batch_size": 4, "sequence_length": 16, "warmup_steps": 5,
         "measured_steps": 30, "requested_repeats": 3, "retries": 0,
-        "config_sha256": hashlib.sha256(CONFIG.read_bytes()).hexdigest(),
+        "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
         "train_text_sha256": hashlib.sha256(train_text.read_bytes()).hexdigest()}.items()):
         raise ValueError("manifest provenance or baseline mismatch")
     if type(result["cuda_device_count"]) is not int:

@@ -1,0 +1,30 @@
+{
+  "cpu_threads": 2,
+  "gradient_accumulation_steps": 4,
+  "metric_warmup_steps": 2,
+  "microbatch_size": 2,
+  "model": {
+    "attention_backend": "sdpa",
+    "d_model": 512,
+    "intermediate_size": 1536,
+    "max_seq_len": 256,
+    "n_heads": 8,
+    "n_layers": 6,
+    "vocab_size": 1024
+  },
+  "precision": "fp32",
+  "seed": 20261012,
+  "train": {
+    "learning_rate": 0.0003,
+    "max_steps": 489,
+    "min_learning_rate": 0.00003,
+    "warmup_steps": 2,
+    "weight_decay": 0.01
+  },
+  "long_run": {
+    "target_tokens": 1000000,
+    "validation_interval_steps": 489,
+    "max_cuda_reserved_bytes": 12884901888,
+    "max_wall_seconds": 3600
+  }
+}

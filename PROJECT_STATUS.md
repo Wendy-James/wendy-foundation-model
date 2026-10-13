@@ -20,6 +20,9 @@ Build an interview-ready foundation-model training and systems project.
   `39bc1b9cc857115f788f6b604845178677fc2ad0`, with finite gradients
   and an actual parameter update. See [report](docs/kaggle-model-smoke.md)
   and [verified result](benchmarks/infra/gpu_model_smoke_20261009.json).
+- M6-B: one bounded, three-arm real-data T4 pilot passed strict verification
+  at pinned commit `8eba5c0e006696ad6b1cfcb786b70ff00dc354ac`.
+  See the [evidence and M7 direction](docs/m6-b-evidence.md).
 
 ## Infrastructure evidence
 

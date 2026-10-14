@@ -7,7 +7,8 @@ from wendyfm.model import ModelConfig, TinyDecoderLM
 
 def tiny_model():
     torch.manual_seed(7)
-    return TinyDecoderLM(ModelConfig(vocab_size=24, d_model=32, n_heads=4, n_layers=2, max_seq_len=12))
+    cfg = ModelConfig(vocab_size=24, d_model=32, n_heads=4, n_layers=2, max_seq_len=12)
+    return TinyDecoderLM(cfg)
 
 
 def test_shapes_and_loss():

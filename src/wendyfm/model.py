@@ -16,7 +16,9 @@ class ModelConfig:
     ffn_multiplier: int = 4
 
     def __post_init__(self):
-        if self.vocab_size < 2 or min(self.d_model, self.n_heads, self.n_layers, self.max_seq_len) <= 0:
+        if self.vocab_size < 2 or min(
+            self.d_model, self.n_heads, self.n_layers, self.max_seq_len
+        ) <= 0:
             raise ValueError("vocab_size >= 2 and dimensions must be positive")
         if self.d_model % self.n_heads != 0 or (self.d_model // self.n_heads) % 2:
             raise ValueError("d_model / n_heads must be an even integer for RoPE")
@@ -58,7 +60,10 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, t, c = x.shape
-        q, k, v = self.qkv(x).reshape(b, t, 3, self.n_heads, self.head_dim).permute(2, 0, 3, 1, 4).unbind(0)
+        q, k, v = (
+            self.qkv(x).reshape(b, t, 3, self.n_heads, self.head_dim)
+            .permute(2, 0, 3, 1, 4).unbind(0)
+        )
         q, k = apply_rope(q), apply_rope(k)
         scores = q @ k.transpose(-2, -1) * self.head_dim ** -0.5
         future = torch.ones(t, t, dtype=torch.bool, device=x.device).triu(diagonal=1)
@@ -108,7 +113,9 @@ class TinyDecoderLM(nn.Module):
             raise ValueError("token_ids must be int64 with shape [batch, time]")
         if token_ids.shape[1] == 0 or token_ids.shape[1] > self.cfg.max_seq_len:
             raise ValueError("sequence length out of configured bounds")
-        if token_ids.numel() and (int(token_ids.min()) < 0 or int(token_ids.max()) >= self.cfg.vocab_size):
+        if token_ids.numel() and (
+            int(token_ids.min()) < 0 or int(token_ids.max()) >= self.cfg.vocab_size
+        ):
             raise ValueError("token id out of vocabulary range")
         if labels is not None and (labels.shape != token_ids.shape or labels.dtype != torch.long):
             raise ValueError("labels must match token_ids shape and dtype")
@@ -116,5 +123,11 @@ class TinyDecoderLM(nn.Module):
         for block in self.blocks:
             x = block(x)
         logits = self.lm_head(self.norm(x))
-        loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]).float(), labels.reshape(-1), ignore_index=-100) if labels is not None else None
+        loss = (
+            F.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]).float(),
+                labels.reshape(-1), ignore_index=-100,
+            )
+            if labels is not None else None
+        )
         return logits, loss

@@ -1,5 +1,6 @@
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 from wendyfm.model import ModelConfig, TinyDecoderLM
 

@@ -126,10 +126,18 @@ def test_result_verifier_checks_metrics_and_artifact_hashes(tmp_path, monkeypatc
     source = json.loads((data / "manifest.json").read_text())
     initial = {"event": "initial", "step": 0, "plan_sha256": "b" * 64,
                "cumulative_target_tokens": 0, "validation_loss": 7.0,
-               "peak_cuda_reserved_bytes": 100}
+               "peak_cuda_allocated_bytes": 80, "peak_cuda_reserved_bytes": 100,
+               "training_wall_seconds": 0.0, "startup_seconds": 1.0,
+               "validation_wall_seconds": 3.0, "checkpoint_wall_seconds": 1.0,
+               "work_wall_seconds": 5.0}
     final = {"event": "complete", "step": 489, "plan_sha256": "b" * 64,
              "cumulative_target_tokens": 1_001_472, "validation_loss": 6.0,
-             "peak_cuda_reserved_bytes": 200, "work_wall_seconds": 100.0,
+             "peak_cuda_allocated_bytes": 160, "peak_cuda_reserved_bytes": 200,
+             "work_wall_seconds": 100.0, "training_wall_seconds": 70.0,
+             "startup_seconds": 0.0, "validation_wall_seconds": 20.0,
+             "checkpoint_wall_seconds": 5.0,
+             "full_run_target_tokens_per_second": 1_001_472 / 100,
+             "train_loss_first_batch": 6.0, "train_loss_last_batch": 6.0,
              "timed_target_tokens": 997_376, "timed_seconds": 50.0,
              "timed_target_tokens_per_second": 997_376 / 50,
              "train_loss_curve": [{"step": step, "train_loss": 6.0,
@@ -161,6 +169,17 @@ def test_result_verifier_checks_metrics_and_artifact_hashes(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="training loss curve"):
         LOCAL["verify_result"](path, data, "a" * 40, manifest_sha)
     result["events"][1]["train_loss_curve"][0]["step"] = 1
+    for key, bad_value in (("timed_target_tokens", 2048),
+                           ("peak_cuda_allocated_bytes", None),
+                           ("training_wall_seconds", -1.0),
+                           ("train_loss_first_batch", float("nan"))):
+        original = final[key]
+        final[key] = bad_value
+        path.write_text(json.dumps(result))
+        with pytest.raises(ValueError):
+            LOCAL["verify_result"](path, data, "a" * 40, manifest_sha)
+        final[key] = original
+    path.write_text(json.dumps(result))
     (data / "validation.jsonl").write_text("tamper")
     with pytest.raises(ValueError, match="validation.jsonl SHA256"):
         LOCAL["verify_result"](path, data, "a" * 40, manifest_sha)

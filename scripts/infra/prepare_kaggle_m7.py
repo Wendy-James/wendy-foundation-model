@@ -28,6 +28,11 @@ def valid_hash(value: str, length: int) -> bool:
     return isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is not None
 
 
+def finite_number(value: object, *, positive: bool = False) -> bool:
+    return (not isinstance(value, bool) and isinstance(value, (int, float)) and
+            math.isfinite(value) and (value > 0 if positive else value >= 0))
+
+
 def verify_attachment(data_dir: Path, manifest_sha256: str,
                       tokenizer_sha256: str | None = None) -> dict:
     """Verify only the four allowed files and their byte hashes before packaging."""
@@ -123,33 +128,55 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
     for event in events:
         if event.get("cumulative_target_tokens") != event["step"] * 2048 or not isinstance(
             event.get("validation_loss"), (int, float)
-        ) or not math.isfinite(event["validation_loss"]):
+        ) or not finite_number(event["validation_loss"], positive=True):
             raise ValueError("event token accounting or validation loss mismatch")
+        allocated = event.get("peak_cuda_allocated_bytes")
         reserved = event.get("peak_cuda_reserved_bytes")
-        if type(reserved) is not int or not 0 < reserved < 12 * 1024**3:
+        if (type(allocated) is not int or type(reserved) is not int or
+                not 0 < allocated <= reserved < 12 * 1024**3):
             raise ValueError("CUDA memory gate violated")
         if event.get("plan_sha256") != plan_sha256:
             raise ValueError("event plan hash mismatch")
+        for key in ("startup_seconds", "validation_wall_seconds",
+                    "checkpoint_wall_seconds", "training_wall_seconds"):
+            if not finite_number(event.get(key), positive=key != "startup_seconds" and
+                                 (key != "training_wall_seconds" or event["step"] > 0)):
+                raise ValueError("event timing missing or nonfinite")
+        expected_work = sum(event[key] for key in (
+            "startup_seconds", "validation_wall_seconds", "checkpoint_wall_seconds",
+            "training_wall_seconds"))
+        if event["step"]:
+            expected_work += events[0]["work_wall_seconds"]
+        if (not finite_number(event.get("work_wall_seconds"), positive=True) or
+                not math.isclose(event["work_wall_seconds"], expected_work, rel_tol=1e-6)):
+            raise ValueError("event wall-time accounting mismatch")
     final = events[1]
     curve = final.get("train_loss_curve")
     if not isinstance(curve, list) or len(curve) != 489 or any(
         not isinstance(item, dict) or item.get("step") != index or any(
-            not isinstance(item.get(key), (int, float)) or
-            not math.isfinite(item[key]) for key in ("train_loss", "gradient_norm")
+            not finite_number(item.get(key), positive=key == "train_loss")
+            for key in ("train_loss", "gradient_norm")
         ) for index, item in enumerate(curve, 1)
     ):
         raise ValueError("incomplete or nonfinite training loss curve")
+    if (final.get("train_loss_first_batch") != curve[0]["train_loss"] or
+            final.get("train_loss_last_batch") != curve[-1]["train_loss"]):
+        raise ValueError("training loss endpoints differ from curve")
     timed_tokens = final.get("timed_target_tokens")
     timed_seconds = final.get("timed_seconds")
     throughput = final.get("timed_target_tokens_per_second")
     wall = final.get("work_wall_seconds")
-    if (type(timed_tokens) is not int or not 0 < timed_tokens <= 489 * 2048 or
+    if (type(timed_tokens) is not int or timed_tokens != (489 - 2) * 2048 or
             not isinstance(timed_seconds, (int, float)) or
             not math.isfinite(timed_seconds) or timed_seconds <= 0 or
+            timed_seconds > final["training_wall_seconds"] or
             not isinstance(throughput, (int, float)) or not math.isfinite(throughput) or
             not math.isclose(throughput, timed_tokens / timed_seconds, rel_tol=1e-6) or
             not isinstance(wall, (int, float)) or not math.isfinite(wall) or
-            not 0 < wall < 3600):
+            not 0 < wall < 3600 or
+            not finite_number(final.get("full_run_target_tokens_per_second"), positive=True) or
+            not math.isclose(final["full_run_target_tokens_per_second"],
+                             1_001_472 / wall, rel_tol=1e-6)):
         raise ValueError("incomplete or inconsistent measured result")
     checkpoint = result.get("checkpoint")
     if not isinstance(checkpoint, dict) or checkpoint.get("step") != 489 or not valid_hash(

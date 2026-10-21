@@ -111,7 +111,7 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
     if any(not matches_expected(result.get(key), value) for key, value in expected.items()):
         raise ValueError("result status, retry count, or provenance mismatch")
     plan = result.get("plan")
-    if not isinstance(plan, dict) or any(plan.get(key) != value for key, value in {
+    if not isinstance(plan, dict) or any(not matches_expected(plan.get(key), value) for key, value in {
         "source_commit_sha": sha, "source_manifest_sha256": manifest_sha256,
         "config_sha256": CONFIG_SHA256, "tokenizer_sha256": TOKENIZER_SHA256,
         "device": "cuda:0", "cuda_device_count": 1, "precision": "fp32",
@@ -120,7 +120,7 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
         "max_cuda_reserved_bytes": 12 * 1024**3,
         "train_artifact_sha256": source["train_artifact_sha256"],
         "validation_artifact_sha256": source["validation_artifact_sha256"],
-    }.items() if not matches_expected(plan.get(key), value)) or "T4" not in str(plan.get("gpu_name", "")):
+    }.items()) or "T4" not in str(plan.get("gpu_name", "")):
         raise ValueError("run plan provenance or T4 protocol mismatch")
     events = result.get("events")
     if (not isinstance(events, list) or len(events) != 2 or

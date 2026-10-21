@@ -33,6 +33,11 @@ def finite_number(value: object, *, positive: bool = False) -> bool:
             math.isfinite(value) and (value > 0 if positive else value >= 0))
 
 
+def matches_expected(actual: object, expected: object) -> bool:
+    """Compare frozen integer fields without accepting bool as int."""
+    return (type(actual) is int if type(expected) is int else True) and actual == expected
+
+
 def verify_attachment(data_dir: Path, manifest_sha256: str,
                       tokenizer_sha256: str | None = None) -> dict:
     """Verify only the four allowed files and their byte hashes before packaging."""
@@ -103,7 +108,7 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
     expected = {"status": "PASS", "test": "m7_1m_private_t4", "retries": 0,
                 "expected_commit_sha": sha, "tested_commit_sha": sha,
                 "expected_manifest_sha256": manifest_sha256}
-    if any(result.get(key) != value for key, value in expected.items()):
+    if any(not matches_expected(result.get(key), value) for key, value in expected.items()):
         raise ValueError("result status, retry count, or provenance mismatch")
     plan = result.get("plan")
     if not isinstance(plan, dict) or any(plan.get(key) != value for key, value in {
@@ -115,20 +120,22 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
         "max_cuda_reserved_bytes": 12 * 1024**3,
         "train_artifact_sha256": source["train_artifact_sha256"],
         "validation_artifact_sha256": source["validation_artifact_sha256"],
-    }.items()) or "T4" not in str(plan.get("gpu_name", "")):
+    }.items() if not matches_expected(plan.get(key), value)) or "T4" not in str(plan.get("gpu_name", "")):
         raise ValueError("run plan provenance or T4 protocol mismatch")
     events = result.get("events")
-    if not isinstance(events, list) or len(events) != 2 or [e.get("step") for e in events
-                                                           if isinstance(e, dict)] != [0, 489]:
+    if (not isinstance(events, list) or len(events) != 2 or
+            any(not isinstance(e, dict) for e in events) or
+            any(type(e.get("step")) is not int for e in events) or
+            [e["step"] for e in events] != [0, 489]):
         raise ValueError("missing step-zero or completion event")
     if events[0].get("event") != "initial" or events[1].get("event") != "complete":
         raise ValueError("event sequence mismatch")
     plan_sha256 = hashlib.sha256(json.dumps(plan, sort_keys=True,
                                           allow_nan=False).encode()).hexdigest()
     for event in events:
-        if event.get("cumulative_target_tokens") != event["step"] * 2048 or not isinstance(
-            event.get("validation_loss"), (int, float)
-        ) or not finite_number(event["validation_loss"], positive=True):
+        if (type(event.get("cumulative_target_tokens")) is not int or
+                event["cumulative_target_tokens"] != event["step"] * 2048 or
+                not finite_number(event.get("validation_loss"), positive=True)):
             raise ValueError("event token accounting or validation loss mismatch")
         allocated = event.get("peak_cuda_allocated_bytes")
         reserved = event.get("peak_cuda_reserved_bytes")
@@ -153,7 +160,8 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
     final = events[1]
     curve = final.get("train_loss_curve")
     if not isinstance(curve, list) or len(curve) != 489 or any(
-        not isinstance(item, dict) or item.get("step") != index or any(
+        not isinstance(item, dict) or type(item.get("step")) is not int or
+        item["step"] != index or any(
             not finite_number(item.get(key), positive=key == "train_loss")
             for key in ("train_loss", "gradient_norm")
         ) for index, item in enumerate(curve, 1)
@@ -167,21 +175,21 @@ def verify_result(path: Path, data_dir: Path, sha: str, manifest_sha256: str) ->
     throughput = final.get("timed_target_tokens_per_second")
     wall = final.get("work_wall_seconds")
     if (type(timed_tokens) is not int or timed_tokens != (489 - 2) * 2048 or
-            not isinstance(timed_seconds, (int, float)) or
-            not math.isfinite(timed_seconds) or timed_seconds <= 0 or
+            not finite_number(timed_seconds, positive=True) or
             timed_seconds > final["training_wall_seconds"] or
-            not isinstance(throughput, (int, float)) or not math.isfinite(throughput) or
+            not finite_number(throughput, positive=True) or
             not math.isclose(throughput, timed_tokens / timed_seconds, rel_tol=1e-6) or
-            not isinstance(wall, (int, float)) or not math.isfinite(wall) or
+            not finite_number(wall, positive=True) or
             not 0 < wall < 3600 or
             not finite_number(final.get("full_run_target_tokens_per_second"), positive=True) or
             not math.isclose(final["full_run_target_tokens_per_second"],
                              1_001_472 / wall, rel_tol=1e-6)):
         raise ValueError("incomplete or inconsistent measured result")
     checkpoint = result.get("checkpoint")
-    if not isinstance(checkpoint, dict) or checkpoint.get("step") != 489 or not valid_hash(
+    if (not isinstance(checkpoint, dict) or type(checkpoint.get("step")) is not int or
+            checkpoint["step"] != 489 or not valid_hash(
         checkpoint.get("sha256"), 64
-    ) or type(checkpoint.get("bytes")) is not int or checkpoint["bytes"] <= 0:
+    ) or type(checkpoint.get("bytes")) is not int or checkpoint["bytes"] <= 0):
         raise ValueError("checkpoint metadata missing")
     return result
 

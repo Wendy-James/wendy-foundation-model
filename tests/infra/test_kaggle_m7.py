@@ -164,6 +164,26 @@ def test_result_verifier_checks_metrics_and_artifact_hashes(tmp_path, monkeypatc
     path = tmp_path / "result.json"
     path.write_text(json.dumps(result))
     assert LOCAL["verify_result"](path, data, "a" * 40, manifest_sha) == result
+    # Reject booleans masquerading as frozen integer fields or measured floats.
+    for obj, key, bad, message in (
+        (result, "retries", False, "retry count"),
+        (result["plan"], "cuda_device_count", True, "run plan"),
+        (initial, "step", False, "step-zero"),
+        (initial, "cumulative_target_tokens", False, "token accounting"),
+        (final, "timed_seconds", True, "measured result"),
+    ):
+        original = obj[key]
+        old_throughput = final["timed_target_tokens_per_second"]
+        obj[key] = bad
+        if key == "timed_seconds":
+            # Without an explicit type guard this manipulated result passes arithmetic.
+            final["timed_target_tokens_per_second"] = 997_376.0
+        path.write_text(json.dumps(result))
+        with pytest.raises(ValueError, match=message):
+            LOCAL["verify_result"](path, data, "a" * 40, manifest_sha)
+        obj[key] = original
+        final["timed_target_tokens_per_second"] = old_throughput
+    path.write_text(json.dumps(result))
     result["events"][1]["train_loss_curve"][0]["step"] = 2
     path.write_text(json.dumps(result))
     with pytest.raises(ValueError, match="training loss curve"):

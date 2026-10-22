@@ -14,6 +14,9 @@ card requires Transformers >=4.51.0; no Transformers version has passed actual
 model inference here. The selected local loader requires the exact pinned snapshot,
 uses `local_files_only=True`, `trust_remote_code=False`, CPU float32, greedy
 generation, `enable_thinking=False`, and at most 128 generated tokens per decision.
+The Transformers chat template returns both
+input IDs and the attention mask; contexts above 4,096 input tokens are rejected
+before `model.generate`, without silently truncating feedback.
 It never automatically downloads weights. The published model weight file is
 1,503,300,328 bytes; actual runtime RAM is not yet measured.
 
@@ -34,9 +37,15 @@ Each decision has a 60-second maximum in the real-model command, with four decis
 The child is terminated on deadline/exit. This process separation does **not** provide
 an OS sandbox against malicious local Python code; private evaluation needs stronger
 isolation. The synthetic task has no held-out split, and its answer is public.
-Model-worker shutdown escalates from SIGTERM to SIGKILL after a one-second grace
-period; a SIGTERM-resistant mock is covered by an offline regression test. This
-does not change P0's separate scripted-policy worker implementation.
+Both model and P0 scripted workers now share bounded shutdown: SIGTERM with a
+0.5-second grace deadline, then SIGKILL with a separate 0.5-second reap deadline.
+Cleanup failures preserve an in-flight exception as the primary error and attach
+the cleanup failure as its cause. Session close is idempotent; abrupt startup exit
+and broken IPC are classified as inference failures. These bounds apply to the
+direct worker, not arbitrary descendants or malicious native/OS behavior.
+Cleanup is an additional bounded allowance outside the inference deadline; the
+300-second limit covers startup/decisions, not snapshot lookup, hashing, or CLI
+output. See `P1_CONTINUATION_20261022.md` for B2 reproduction and actual validation.
 
 The unchanged Episode terminal states are `final`, `max_steps`, `timeout` and
 `policy_error`. Model decisions now require integer input/output token counts; P0

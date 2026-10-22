@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from .contracts import Action, Episode, Step, ToolResult, decode
 from .environment import FIXTURE_SHA, LookupEnvironment
+from .processes import cleanup_on_exit, stop_worker
 
 
 def _decide_worker(policy, observation, connection):
@@ -23,16 +24,10 @@ def decide(policy, observation, timeout):
     process = context.Process(target=_decide_worker, args=(policy, observation, child))
     process.start()
     child.close()
-    try:
+    with cleanup_on_exit(lambda: stop_worker(process, parent)):
         if not parent.poll(timeout):
             raise TimeoutError("policy deadline")
         return decode(Action, parent.recv())
-    finally:
-        if process.is_alive():
-            process.terminate()
-        process.join()
-        parent.close()
-        process.close()
 
 
 def _rollout(manifest, decide_one):

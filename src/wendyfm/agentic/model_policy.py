@@ -7,10 +7,12 @@ import time
 from dataclasses import asdict, dataclass
 
 from .contracts import Action, Observation, ToolCall, decode
+from .processes import cleanup_on_exit, stop_worker
 from .runtime import _rollout
 
 MODEL_ID = "Qwen/Qwen3-0.6B"
 MODEL_REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
+MAX_INPUT_TOKENS = 4096
 TOOL_CALL = re.compile(r"\s*<tool_call>\s*(.*?)\s*</tool_call>\s*", re.DOTALL)
 
 
@@ -152,16 +154,19 @@ class _HFBackend:
         self.model, self.tokenizer, self.torch = model, tokenizer, torch
 
     def generate(self, messages, tools, max_new_tokens):
-        ids = self.tokenizer.apply_chat_template(
+        inputs = self.tokenizer.apply_chat_template(
             messages, tools=tools, tokenize=True, add_generation_prompt=True,
-            return_tensors="pt", enable_thinking=False
+            return_tensors="pt", return_dict=True, enable_thinking=False
         )
+        input_tokens = int(inputs["input_ids"].shape[1])
+        if input_tokens > MAX_INPUT_TOKENS:
+            raise ValueError("model input exceeds context token limit")
         with self.torch.inference_mode():
-            output = self.model.generate(ids, do_sample=False, max_new_tokens=max_new_tokens,
+            output = self.model.generate(**inputs, do_sample=False, max_new_tokens=max_new_tokens,
                                          pad_token_id=self.tokenizer.eos_token_id)
-        new_ids = output[0, ids.shape[1]:]
+        new_ids = output[0, input_tokens:]
         return GeneratedTurn(self.tokenizer.decode(new_ids, skip_special_tokens=True),
-                             int(ids.shape[1]), int(new_ids.numel()))
+                             input_tokens, int(new_ids.numel()))
 
 
 def _worker(connection, factory, max_new_tokens):
@@ -202,14 +207,15 @@ class ModelSession:
         self.process.start()
         child.close()
         self.error_type = None
+        self.closed = False
         try:
             response = self._receive(startup_timeout)
             if response != {"ready": True}:
                 self.error_type = response.get("error", "inference_failure")
                 raise PolicyAdapterError(self.error_type)
-        except Exception:
-            self.close()
-            raise
+        except BaseException:
+            with cleanup_on_exit(self.close):
+                raise
 
     def _receive(self, timeout):
         if not self.parent.poll(timeout):
@@ -217,12 +223,16 @@ class ModelSession:
             raise TimeoutError("model decision deadline")
         try:
             return self.parent.recv()
-        except EOFError as exc:
+        except (EOFError, OSError) as exc:
             self.error_type = "inference_failure"
             raise PolicyAdapterError(self.error_type) from exc
 
     def decide(self, observation, timeout):
-        self.parent.send(asdict(observation))
+        try:
+            self.parent.send(asdict(observation))
+        except (OSError, EOFError) as exc:
+            self.error_type = "inference_failure"
+            raise PolicyAdapterError(self.error_type) from exc
         response = self._receive(timeout)
         if "error" in response:
             self.error_type = response["error"]
@@ -231,16 +241,9 @@ class ModelSession:
                 response["output_tokens"])
 
     def close(self):
-        if self.process.is_alive():
-            self.process.terminate()
-        self.process.join(timeout=1.0)
-        if self.process.is_alive():
-            self.process.kill()
-            self.process.join(timeout=1.0)
-        if self.process.is_alive():
-            raise RuntimeError("model worker could not be stopped")
-        self.parent.close()
-        self.process.close()
+        if not self.closed:
+            stop_worker(self.process, self.parent)
+            self.closed = True
 
 
 def rollout_model(manifest, factory, *, max_new_tokens=128):
@@ -255,7 +258,7 @@ def rollout_model(manifest, factory, *, max_new_tokens=128):
     deadline = time.monotonic() + min(300.0, (manifest.max_steps + 1) *
                                       manifest.timeout_seconds)
     session = ModelSession(factory, max_new_tokens, manifest.timeout_seconds)
-    try:
+    with cleanup_on_exit(session.close):
         def bounded_decide(observation, timeout):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -265,5 +268,3 @@ def rollout_model(manifest, factory, *, max_new_tokens=128):
 
         episode = _rollout(manifest, bounded_decide)
         return episode, session.error_type
-    finally:
-        session.close()

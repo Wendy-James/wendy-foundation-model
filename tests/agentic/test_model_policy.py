@@ -1,6 +1,7 @@
 """Offline P1 model-policy tests; no model files or Transformers are imported."""
 
 import json
+import signal
 import time
 from dataclasses import dataclass, replace
 
@@ -48,6 +49,13 @@ class MockBackend:
         self.calls.append((json.loads(json.dumps(messages)), tools, max_new_tokens))
         time.sleep(self.sleep_seconds)
         return GeneratedTurn(next(self.turns), 24 + len(messages), 8)
+
+
+@dataclass(frozen=True)
+class ResistantFactory(MockFactory):
+    def __call__(self):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        return super().__call__()
 
 
 def call(key):
@@ -142,6 +150,16 @@ def test_timeout_kills_model_worker():
     assert error == "timeout"
     assert episode.terminal_state == "timeout"
     assert verify_episode(episode, manifest).value == 0.0
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGTERM"), reason="POSIX signal test")
+def test_sigterm_resistant_model_worker_has_bounded_cleanup():
+    start = time.monotonic()
+    manifest = model_manifest(timeout=0.2)
+    episode, error = rollout_model(manifest, ResistantFactory((call("start"),), 5.0))
+    assert time.monotonic() - start < 3.0
+    assert error == "timeout"
+    assert episode.terminal_state == "timeout"
 
 
 def test_model_provenance_mismatch_rejected():

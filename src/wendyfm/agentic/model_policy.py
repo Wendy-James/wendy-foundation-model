@@ -233,7 +233,12 @@ class ModelSession:
     def close(self):
         if self.process.is_alive():
             self.process.terminate()
-        self.process.join()
+        self.process.join(timeout=1.0)
+        if self.process.is_alive():
+            self.process.kill()
+            self.process.join(timeout=1.0)
+        if self.process.is_alive():
+            raise RuntimeError("model worker could not be stopped")
         self.parent.close()
         self.process.close()
 

@@ -34,6 +34,9 @@ Each decision has a 60-second maximum in the real-model command, with four decis
 The child is terminated on deadline/exit. This process separation does **not** provide
 an OS sandbox against malicious local Python code; private evaluation needs stronger
 isolation. The synthetic task has no held-out split, and its answer is public.
+Model-worker shutdown escalates from SIGTERM to SIGKILL after a one-second grace
+period; a SIGTERM-resistant mock is covered by an offline regression test. This
+does not change P0's separate scripted-policy worker implementation.
 
 The unchanged Episode terminal states are `final`, `max_steps`, `timeout` and
 `policy_error`. Model decisions now require integer input/output token counts; P0

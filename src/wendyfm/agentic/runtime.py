@@ -6,6 +6,7 @@ from dataclasses import asdict
 
 from .contracts import Action, Episode, Step, ToolResult, decode
 from .environment import FIXTURE_SHA, LookupEnvironment
+from .processes import cleanup_on_exit, stop_worker
 
 
 def _decide_worker(policy, observation, connection):
@@ -23,19 +24,13 @@ def decide(policy, observation, timeout):
     process = context.Process(target=_decide_worker, args=(policy, observation, child))
     process.start()
     child.close()
-    try:
+    with cleanup_on_exit(lambda: stop_worker(process, parent)):
         if not parent.poll(timeout):
             raise TimeoutError("policy deadline")
         return decode(Action, parent.recv())
-    finally:
-        if process.is_alive():
-            process.terminate()
-        process.join()
-        parent.close()
-        process.close()
 
 
-def rollout(manifest, policy):
+def _rollout(manifest, decide_one):
     # Revalidate even programmatically constructed contracts before execution.
     manifest = decode(type(manifest), asdict(manifest))
     if manifest.fixture_sha256 != FIXTURE_SHA:
@@ -48,7 +43,9 @@ def rollout(manifest, policy):
         started = time.monotonic()
         action, result = None, None
         try:
-            action = decide(policy, env.observe(), manifest.timeout_seconds)
+            action, input_tokens, output_tokens = decide_one(
+                env.observe(), manifest.timeout_seconds
+            )
             if action.tool_call is not None:
                 result = env.step(action.tool_call)
             if time.monotonic() - started > manifest.timeout_seconds:
@@ -57,7 +54,9 @@ def rollout(manifest, policy):
             terminal, result = "timeout", ToolResult("timeout", "step deadline exceeded")
         except Exception:
             terminal = "policy_error"
-        steps.append(Step(index, action, result, float(time.monotonic() - started), None, None))
+        steps.append(Step(index, action, result, float(time.monotonic() - started),
+                          input_tokens if action is not None else None,
+                          output_tokens if action is not None else None))
         if terminal in ("timeout", "policy_error"):
             break
         if action.final_answer is not None:
@@ -65,6 +64,13 @@ def rollout(manifest, policy):
             break
     from .verifier import reward_for
     return Episode(manifest, steps, terminal, reward_for(manifest, steps, terminal))
+
+
+def rollout(manifest, policy):
+    """Preserve the P0 spawned-policy boundary and scripted token semantics."""
+    return _rollout(manifest, lambda observation, timeout: (
+        decide(policy, observation, timeout), None, None
+    ))
 
 
 def scripted_policy(observation):

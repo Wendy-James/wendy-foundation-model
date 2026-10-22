@@ -36,8 +36,16 @@ def verify_episode(episode, trusted_manifest):
     for index, step in enumerate(episode.steps):
         if step.index != index or terminal != "max_steps":
             raise ValueError("step ordering mismatch")
-        if step.input_tokens is not None or step.output_tokens is not None:
-            raise ValueError("scripted token metrics must be null")
+        counts = (step.input_tokens, step.output_tokens)
+        if trusted_manifest.policy.kind == "scripted":
+            if any(value is not None for value in counts):
+                raise ValueError("scripted token metrics must be null")
+        elif step.action is not None and any(
+            type(value) is not int or value < 0 for value in counts
+        ):
+            raise ValueError("model decisions require integer token counts")
+        elif step.action is None and any(value is not None for value in counts):
+            raise ValueError("failed model decisions cannot claim token counts")
         if step.result is not None and step.result.status == "timeout":
             if step.result.output != "step deadline exceeded":
                 raise ValueError("timeout mismatch")

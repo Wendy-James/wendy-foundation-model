@@ -79,3 +79,38 @@ public task, capped generated tokens and wall time. Parse tool calls strictly an
 actual tokenizer token counts, success, invalid actions, latency, model/tokenizer digests.
 Do not use the short-trained 21.5M WendyFM model as a claimed capable agent. No GPU or
 training is needed; approve model choice/license and artifact source before download.
+
+## Optional replay receipt (infrastructure, not a research verifier)
+
+`provenance.ReplayProvenance` uses `wendyfm.replay-provenance.v0.1` as a separate
+sidecar; frozen Episode v0.1 JSON and historical replay stay unchanged.
+`bind_provenance(episode, source=..., verifier_sha256=..., model_sha256=...,
+tokenizer_sha256=...)` is a host recorder helper, never a policy API.
+`verify_bound_episode(episode, receipt, trusted_manifest, trusted_receipt)` compares
+an independently retained receipt, binds canonical Episode and ordered non-null tool
+result hashes, then invokes the fixed local verifier. The host must measure/store
+code, task, verifier and artifact identities independently; passing the trace's own
+receipt as trusted is not authentication. SHA equality does not prove execution of
+those bytes. Legacy CLI replay is still environment/reward consistency only and does
+not call this opt-in API or validate the model-rollout wrapper's artifact claims.
+
+Source is explicitly `scripted`, `mock`, or `real`. Scripted must have scripted policy;
+mock/real must have model policy. Real requires model/tokenizer artifact SHA256s;
+mock/scripted cannot claim them. A source label is a host assertion, not evidence that
+inference occurred. No timing/token value is estimated by this extension; it hashes
+existing measurements/nulls unchanged. Mock token counts are backend-double outputs,
+not genuine tokenizer measurements. No external verifier callback is accepted.
+
+Required independent research fixture: a separately reviewed, versioned
+`wendyfm.research-fixture.v0.1` interface (specification only, NOT implemented).
+Its public portion must pin immutable task/source revision, public tool schema,
+public input digest and split identity. A protected host registry must separately pin
+independent expected-label digest, verifier implementation digest/identity, reward
+specification revision and fixture owner; only the registry selects a reviewed
+verifier. Negative fixtures must cover wrong answers, altered outputs, stale task
+revision, self-awarded rewards and policy-supplied verifier rejection. Labels and
+verifier code must never enter policy observations. The existing lookup verifier
+cannot accept research tasks; this requires a separate reviewed interface change.
+The independent paper project supplies/reviews those fixtures and owns reward science,
+statistics and scientific claims. No paper repository or private fixture is required
+or accessed for the current public infrastructure audit.

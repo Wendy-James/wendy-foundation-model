@@ -4,6 +4,7 @@ import json
 import multiprocessing as mp
 import re
 import time
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 
 from .contracts import Action, Observation, ToolCall, decode
@@ -58,7 +59,7 @@ def parse_turn(text, registered_tools):
             return Action(ToolCall(payload["name"], payload["arguments"]), None)
         except ValueError as exc:
             raise PolicyAdapterError("parse_error") from exc
-    if "<tool_call>" in text or "</tool_call>" in text or "<think>" in text:
+    if any(tag in text for tag in ("<tool_call>", "</tool_call>", "<think>", "</think>")):
         raise PolicyAdapterError("parse_error")
     if "<|" in text or "|>" in text:
         raise PolicyAdapterError("parse_error")
@@ -79,43 +80,53 @@ class ToolCallingPolicy:
         self.messages = []
         self.feedback_count = 0
         self.pending_call = False
+        self.observation = None
 
     def decide(self, observation):
         observation = decode(Observation, asdict(observation))
+        messages = deepcopy(self.messages)
         if not self.messages:
             if observation.feedback:
                 raise PolicyAdapterError("stale_observation")
-            self.messages = [{"role": "user", "content": observation.instruction}]
+            messages = [{"role": "user", "content": observation.instruction}]
         elif self.pending_call and len(observation.feedback) == self.feedback_count + 1:
+            if (observation.instruction != self.observation.instruction or
+                    observation.tools != self.observation.tools or
+                    observation.feedback[:-1] != self.observation.feedback):
+                raise PolicyAdapterError("stale_observation")
             feedback = observation.feedback[-1]
-            self.messages.append({"role": "tool", "content": (
+            messages.append({"role": "tool", "content": (
                 f"status={feedback.status}; output={feedback.output}")})
-            self.feedback_count += 1
-            self.pending_call = False
         else:
             raise PolicyAdapterError("stale_observation")
         tools = [{"type": "function", "function": {"name": name,
                   "description": "Look up a key in the task's public tool world.",
                   "parameters": schema}} for name, schema in observation.tools.items()]
         try:
-            turn = self.backend.generate(self.messages, tools, self.max_new_tokens)
+            turn = self.backend.generate(deepcopy(messages), tools, self.max_new_tokens)
         except Exception as exc:
             raise PolicyAdapterError("inference_failure") from exc
         if (not isinstance(turn, GeneratedTurn) or
-                type(turn.input_tokens) is not int or turn.input_tokens < 0 or
+                type(turn.input_tokens) is not int or
+                not 0 < turn.input_tokens <= MAX_INPUT_TOKENS or
                 type(turn.output_tokens) is not int or
                 not 0 < turn.output_tokens <= self.max_new_tokens):
             raise PolicyAdapterError("inference_failure")
         action = parse_turn(turn.text, observation.tools)
         if action.tool_call is not None:
             call = action.tool_call
-            self.messages.append({"role": "assistant", "content": "", "tool_calls": [
+            messages.append({"role": "assistant", "content": "", "tool_calls": [
                 {"type": "function", "function": {"name": call.name,
                  "arguments": call.arguments}}
             ]})
-            self.pending_call = True
         else:
-            self.messages.append({"role": "assistant", "content": action.final_answer})
+            messages.append({"role": "assistant", "content": action.final_answer})
+        # Commit history only after a valid decision; failed turns can be retried
+        # without consuming feedback or duplicating tool responses.
+        self.messages = messages
+        self.feedback_count = len(observation.feedback)
+        self.pending_call = action.tool_call is not None
+        self.observation = observation
         return action, turn.input_tokens, turn.output_tokens
 
 
@@ -237,8 +248,10 @@ class ModelSession:
         if "error" in response:
             self.error_type = response["error"]
             raise PolicyAdapterError(self.error_type)
-        return (decode(Action, response["action"]), response["input_tokens"],
-                response["output_tokens"])
+        decision = (decode(Action, response["action"]), response["input_tokens"],
+                    response["output_tokens"])
+        self.error_type = None
+        return decision
 
     def close(self):
         if not self.closed:

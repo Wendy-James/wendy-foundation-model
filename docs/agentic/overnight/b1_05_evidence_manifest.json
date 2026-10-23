@@ -1,0 +1,66 @@
+{
+  "base_sha": "ce66312aad0e47c38aae7225a9ab124dcd03880f",
+  "scope": "Uncommitted reviewed files plus unchanged interface/runtime anchors; excludes handoff report and manifest itself to avoid self-reference",
+  "files": {
+    "docs/agentic/PAPER_INTERFACE.md": {
+      "sha256": "5cccab49e29c4687116ebbe06894c05d76e7a5af3e9d30920271e41edeff9cae",
+      "bytes": 7703
+    },
+    "src/wendyfm/agentic/model_policy.py": {
+      "sha256": "9775928d6610e29aef987c9bb03b28c84ccb6c0b5bbe557898eb14c517d4ad4a",
+      "bytes": 11791
+    },
+    "tests/agentic/test_model_policy.py": {
+      "sha256": "0f6ca1db4c5628246e2d150e09be48c0a3d5e3c8047be406b5bfd95589788830",
+      "bytes": 15807
+    },
+    "src/wendyfm/agentic/provenance.py": {
+      "sha256": "63e58cda7139f0e68f5488d98ab18ec3b478d4549533cbe2d1b0f7d1989a31a7",
+      "bytes": 3636
+    },
+    "tests/agentic/test_provenance.py": {
+      "sha256": "0500e22796fcf3673c79addad34110d47f8b67f8970b37e84debf7e869433572",
+      "bytes": 4605
+    },
+    "docs/agentic/overnight/b1_02_policy_adapter_report.md": {
+      "sha256": "0042bb39e28815bf9f8cdce8e8a30d222edaa43fce6ba615df590427e0bef8aa",
+      "bytes": 10374
+    },
+    "docs/agentic/overnight/b1_03_local_inference_gate_report.md": {
+      "sha256": "33f141c55e9a2b72440765473bd01cfabca7a9f7f506bb377cbc118b80c5bcd7",
+      "bytes": 10750
+    },
+    "docs/agentic/overnight/b1_04_trl_readiness_report.md": {
+      "sha256": "813f9ab553fb9ed1ed6a95ed86d71cce1df9fecb0d68877b81082221d7824a1b",
+      "bytes": 19815
+    },
+    "docs/agentic/overnight/b1_06_replay_provenance_report.md": {
+      "sha256": "bdf88de7ee6c3725d3b07650422aae332cba6de52e33c7cf7528f1379e60f1cd",
+      "bytes": 9923
+    },
+    "src/wendyfm/agentic/contracts.py": {
+      "sha256": "80c794af3a1f0ed7f29838417eb85fab77bb3f39eddc63389c2319731415b2a0",
+      "bytes": 5248
+    },
+    "src/wendyfm/agentic/runtime.py": {
+      "sha256": "3842f4b661dd1fc83ebdf31f68fc6c747e650daf09693c0bec209cd3533cf918",
+      "bytes": 3127
+    },
+    "src/wendyfm/agentic/verifier.py": {
+      "sha256": "c9135d68b690cc2442c08fb4ffa04e57c506d237b93ea813ce65957204e0ded1",
+      "bytes": 3339
+    },
+    "scripts/run_agentic_model.py": {
+      "sha256": "d9a8adfd334a1691068393f75ca99d9df9836760540c2e22805a933f96069655",
+      "bytes": 3798
+    },
+    "docs/agentic/upstream_api_evidence.json": {
+      "sha256": "e481232721a0b586910d79847b960a4e263b9baf50f6804d543722907c83c1ea",
+      "bytes": 39417
+    },
+    "docs/agentic/upstream_inventory.json": {
+      "sha256": "b55ee082eaebad05604cc8c2bc39eecbd9f5319347324f5d40522f89118c0b9e",
+      "bytes": 40365
+    }
+  }
+}
